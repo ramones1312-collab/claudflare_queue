@@ -1,7 +1,7 @@
-# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R2 — TEST REPORT
+# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R3 — TEST REPORT
 
-**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R2 (remediación de la auditoría externa de R1) · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
-**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r2`
+**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R3 (remediación de la auditoría externa de R1 y de la re-auditoría independiente de R2) · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
+**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r3`
 (`node:22-bookworm-slim@sha256:43ac6c60…772c`, Node 22, wrangler 4.132.0, vitest 2.1.9,
 @cloudflare/vitest-pool-workers 0.5.40), contenedor con rootfs **read-only**, uid **no-root**,
 `cap_drop: ALL`, red bridge **sin salida**, host de 4 vCPU. Resultados exactos, evidencias y tiempos

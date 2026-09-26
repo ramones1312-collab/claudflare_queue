@@ -47,13 +47,20 @@ export function readZip(file) {
   const LIMIT = 256 * 1024 * 1024;                    // the package is < 1 MiB; refuse zip bombs
   let total = 0;
   let p = buf.readUInt32LE(eocd + 16);
+  const cdStart = p;
   const out = [];
+  const seen = new Set();
+  const spans = [];
   for (let i = 0; i < count; i++) {
     if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('bad central directory');
     const method = buf.readUInt16LE(p + 10), crc = buf.readUInt32LE(p + 16), csize = buf.readUInt32LE(p + 20);
     const nlen = buf.readUInt16LE(p + 28), xlen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32);
     const attr = buf.readUInt32LE(p + 38), lo = buf.readUInt32LE(p + 42);
     const name = buf.toString('utf8', p + 46, p + 46 + nlen);
+    // N-5 · duplicate names extract last-wins and differently across unzip tools: refuse them.
+    if (seen.has(name)) throw new Error(`duplicate entry in zip: ${name}`);
+    seen.add(name);
+    if (buf.readUInt32LE(lo) !== 0x04034b50 || buf.toString('utf8', lo + 30, lo + 30 + buf.readUInt16LE(lo + 26)) !== name) throw new Error(`local header does not match the central directory: ${name}`);
     const lnlen = buf.readUInt16LE(lo + 26), lxlen = buf.readUInt16LE(lo + 28);
     const raw = buf.subarray(lo + 30 + lnlen + lxlen, lo + 30 + lnlen + lxlen + csize);
     const usize = buf.readUInt32LE(p + 24);
@@ -62,8 +69,15 @@ export function readZip(file) {
     const data = method === 8 ? zlib.inflateRawSync(raw, { maxOutputLength: usize }) : Buffer.from(raw);
     if ((zlib.crc32(data) >>> 0) !== crc) throw new Error(`CRC mismatch in ${name}`);
     out.push({ name, data, mode: (attr >>> 16) & 0o777 });
+    spans.push([lo, lo + 30 + lnlen + lxlen + csize]);
     p += 46 + nlen + xlen + clen;
   }
+  // N-5 · the listed entries must tile the file from byte 0 to the central directory: no hidden local
+  // entries (or other bytes) that a different tool could pick up.
+  spans.sort((a, b) => a[0] - b[0]);
+  let at = 0;
+  for (const [s, e] of spans) { if (s !== at) throw new Error('zip has bytes not described by its central directory'); at = e; }
+  if (at !== cdStart) throw new Error('zip has bytes not described by its central directory');
   return out;
 }
 

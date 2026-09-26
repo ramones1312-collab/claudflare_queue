@@ -23,7 +23,10 @@ function key() {
     fs.mkdirSync(path.dirname(f), { recursive: true });
     fs.writeFileSync(f, crypto.randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' });
   }
-  return Buffer.from(fs.readFileSync(f, 'utf8').trim(), 'hex');
+  const hex = fs.readFileSync(f, 'utf8').trim();
+  // N-6 · an empty or malformed key would be a weak (even zero-length) HMAC key: fail closed.
+  if (!/^[0-9a-f]{64}$/.test(hex)) throw new KawaError('EVIDENCE_KEY_INVALID', `${f} is not a 32-byte hex key; remove it only if no evidence you still rely on was signed with it`);
+  return Buffer.from(hex, 'hex');
 }
 
 /** Canonical JSON: sorted keys, so the signature does not depend on key order. */
@@ -39,6 +42,9 @@ export function sign(obj) {
   return { ...body, signature: { alg: 'HMAC-SHA256', key_id: crypto.createHash('sha256').update(k).digest('hex').slice(0, 12),
                                   value: crypto.createHmac('sha256', k).update(canonical(body)).digest('hex') } };
 }
+
+/** True where this installation holds an evidence key (the one that signs its own test runs). */
+export const hasEvidenceKey = () => fs.existsSync(keyFile());
 
 export function verify(obj) {
   if (!obj || !obj.signature || obj.signature.alg !== 'HMAC-SHA256') return false;
@@ -62,7 +68,7 @@ export function readEvidence(file) {
 /**
  * What a STAGING PASS certifies for PROD (audit F-05): every file of the deployer (renderer, config
  * validation, gates, deploy logic), every Edge runtime source (ingress/sequencer/consumer, receiver,
- * admin), the lockfile, and the pinned wrangler. Change any byte and the old PASS stops counting.
+ * admin), the lockfile and package.json, the CLI entry, the Dockerfile, and the pinned wrangler. Change any byte and the old PASS stops counting.
  */
 export function bindingHash(wranglerVersion) {
   const files = [];
@@ -75,6 +81,9 @@ export function bindingHash(wranglerVersion) {
   walk(path.join(DEPLOYER_DIR, 'lib'), 'deployer/lib');
   for (const d of ['src', 'staging-receiver/src', 'admin-worker/src']) walk(path.join(EDGE_DIR, d), `edge/${d}`);
   files.push(['edge/package-lock.json', path.join(EDGE_DIR, 'package-lock.json')]);
+  // R3 (F-05 residue): the CLI entry, the Edge package manifest and the image recipe (Node version).
+  files.push(['deployer/cli.mjs', path.join(DEPLOYER_DIR, 'cli.mjs')], ['edge/package.json', path.join(EDGE_DIR, 'package.json')],
+             ['Dockerfile', path.join(path.dirname(DEPLOYER_DIR), 'Dockerfile')]);
   const h = crypto.createHash('sha256');
   for (const [r, p] of files.sort((a, b) => (a[0] < b[0] ? -1 : 1))) { h.update(`${r}\0`); h.update(fs.readFileSync(p)); h.update('\0'); }
   h.update(`wrangler@${wranglerVersion}`);

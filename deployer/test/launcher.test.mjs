@@ -51,13 +51,13 @@ for (const [where, plant] of [
   });
 }
 
-test('clean folder: the launcher proceeds and writes its stamp as a regular file', () => {
+test('clean folder: the launcher proceeds and, as root, writes nothing into state/ (N-1: no stamp file)', () => {
   const t = sandbox();
   try {
     const r = run(t, ['help']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /compose run --rm installer help/);
-    assert.equal(fs.lstatSync(path.join(t, 'pkg', 'state', '.image-manifest')).isFile(), true);
+    assert.deepEqual(fs.readdirSync(path.join(t, 'pkg', 'state')), []);
   } finally { fs.rmSync(t, { recursive: true, force: true }); }
 });
 
@@ -94,5 +94,19 @@ test('verify-zip reads the ZIP hash from the first line of the two-line .sha256 
     fs.writeFileSync(zip, 'tampered');
     const bad = run(t, ['verify-zip', zip]);
     assert.notEqual(bad.status, 0);
+  } finally { fs.rmSync(t, { recursive: true, force: true }); }
+});
+
+test('N-3 · a hard link planted in state/ never makes root hand a foreign file to the folder owner', () => {
+  if (process.getuid() !== 0) return;                // the chown only happens when the launcher runs as root
+  const t = sandbox();
+  try {
+    fs.mkdirSync(path.join(t, 'pkg', 'state'));
+    ownAsNasUser(t);                                 // package handed to the NAS user first, THEN the link is planted
+    fs.linkSync(path.join(t, 'victims', 'file'), path.join(t, 'pkg', 'state', 'hl'));
+    const r = spawnSync('sh', [path.join(t, 'pkg', 'kawa-edge'), 'help'], { cwd: path.join(t, 'pkg'), encoding: 'utf8', env: { ...process.env, PATH: `${path.join(t, 'bin')}:${process.env.PATH}`, HTTPS_PROXY: '' } });
+    assert.equal(r.status, 0, r.stderr);
+    const st = fs.statSync(path.join(t, 'victims', 'file'));
+    assert.deepEqual([st.uid, st.gid], [0, 0], 'the linked file changed owner');
   } finally { fs.rmSync(t, { recursive: true, force: true }); }
 });

@@ -6,6 +6,7 @@ import os from 'node:os';
 import { writeZip, readZip, extractZip } from '../lib/zip.mjs';
 import { buildManifest, verifyManifest, inputTreeHash, MANIFEST_NAME } from '../lib/manifest.mjs';
 import { selectTargets } from '../lib/release.mjs';
+import { ROOT } from '../lib/paths.mjs';
 
 function tree(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kawa-tree-'));
@@ -63,4 +64,26 @@ test('targeted selection: core -> whole Edge suite; one test file -> that file; 
   assert.equal(selectTargets(['edge/staging-receiver/src/index.js']).deployer, true);
   const docs = selectTargets(['RUNBOOK_VIGENTE.md']);
   assert.deepEqual([docs.allEdge, docs.edgeFiles.length, docs.deployer], [false, 0, false]);
+});
+
+test('F-05 · the STAGING binding covers the deployer, Edge runtime, package files, CLI and Dockerfile', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-'));
+  try {
+    fs.cpSync(path.join(ROOT, 'deployer'), path.join(t, 'deployer'), { recursive: true });
+    for (const f of ['Dockerfile', 'edge/package.json', 'edge/package-lock.json']) { fs.mkdirSync(path.dirname(path.join(t, f)), { recursive: true }); fs.copyFileSync(path.join(ROOT, f), path.join(t, f)); }
+    for (const d of ['edge/src', 'edge/staging-receiver/src', 'edge/admin-worker/src']) fs.cpSync(path.join(ROOT, d), path.join(t, d), { recursive: true });
+    const hash = () => spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { bindingHash } from ${JSON.stringify(path.join(t, 'deployer/lib/evidence.mjs'))}; process.stdout.write(bindingHash('4.132.0'));`],
+      { encoding: 'utf8', env: { ...process.env, KAWA_EDGE_DIR: '', KAWA_ROOT: '' } }).stdout;
+    const base = hash();
+    assert.match(base, /^[0-9a-f]{64}$/);
+    for (const f of ['Dockerfile', 'deployer/cli.mjs', 'edge/package.json', 'deployer/lib/config.mjs', 'edge/src/sequencer.js', 'edge/staging-receiver/src/index.js']) {
+      const p = path.join(t, f), orig = fs.readFileSync(p);
+      fs.appendFileSync(p, '\n');
+      assert.notEqual(hash(), base, `${f} is not bound`);
+      fs.writeFileSync(p, orig);
+    }
+    assert.equal(hash(), base);
+  } finally { fs.rmSync(t, { recursive: true, force: true }); }
 });

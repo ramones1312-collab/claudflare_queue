@@ -19,15 +19,15 @@ import { localChecks } from './preflight.mjs';
 import { createWrangler, pinnedVersion } from './wrangler.mjs';
 import { buildManifest, verifyManifest, inputTreeHash, listPackageFiles, sha256File, MANIFEST_NAME, testInputFiles } from './manifest.mjs';
 import { writeZip, extractZip, readZip } from './zip.mjs';
-import { writeSigned, verify as verifySignature, readEvidence } from './evidence.mjs';
+import { writeSigned, verify as verifySignature, readEvidence, hasEvidenceKey } from './evidence.mjs';
 
 export const IDENTITY = {
   artifact: 'edge-signal-buffer-v1.3.1-nas',
-  revision: 'R2 · external-audit remediation of R1 (2026-09-26)',
+  revision: 'R3 · external-audit remediation of R1 + independent re-audit of R2 (2026-09-26)',
   lineage: 'V1.3.1 <- V1.3.0 R4 CANDIDATE (zip sha256 1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867)',
   runtime_code: 'Edge Worker sources byte-identical to V1.3.0 R4',
 };
-export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip';
+export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3_2026-09-26.zip';
 export const EVIDENCE_NAME = 'TEST_EVIDENCE_V1_3_1.json';
 const ZIP_ROOT = 'kawa-edge-nas';
 
@@ -292,11 +292,12 @@ export async function verifyRelease(ctx, f) {
   try {
     extractZip(zip, tmp);
     const root = path.join(tmp, ZIP_ROOT);
-    if (fs.existsSync(side)) {
-      const line = fs.readFileSync(side, 'utf8').split('\n').find(l => l.endsWith(`${ZIP_ROOT}/${MANIFEST_NAME}`));
-      if (line && line.split(/\s+/)[0] !== sha256File(path.join(root, MANIFEST_NAME))) throw new KawaError('MANIFEST_SHA_MISMATCH', 'manifest SHA-256 differs from the published one');
-      if (line) out.ok('manifest SHA-256 matches the published one');
-    }
+    // N-5 · the published manifest hash (line 2 of the sidecar, or --manifest-sha256) is mandatory.
+    const line = fs.existsSync(side) ? fs.readFileSync(side, 'utf8').split('\n').find(l => l.endsWith(`${ZIP_ROOT}/${MANIFEST_NAME}`)) : null;
+    const wantM = (f['manifest-sha256'] || (line ? line.split(/\s+/)[0] : '')).toLowerCase();
+    if (!wantM) throw new KawaError('MANIFEST_SHA_UNKNOWN', `no published manifest SHA-256 (line 2 of ${path.basename(side)} or --manifest-sha256=<hex>)`);
+    if (wantM !== sha256File(path.join(root, MANIFEST_NAME))) throw new KawaError('MANIFEST_SHA_MISMATCH', 'manifest SHA-256 differs from the published one');
+    out.ok('manifest SHA-256 matches the published one');
     const m = verifyManifest(root);
     if (!m.ok) throw new KawaError('MANIFEST_MISMATCH', `missing ${m.missing} mismatched ${m.mismatched} undeclared ${m.extra}`);
     const declared = new Set([...Object.keys(JSON.parse(fs.readFileSync(path.join(root, MANIFEST_NAME), 'utf8')).files), MANIFEST_NAME]);
@@ -309,7 +310,15 @@ export async function verifyRelease(ctx, f) {
     if (ev.input_tree_sha256 !== h || ev.result !== 'PASS') throw new KawaError('EVIDENCE_NOT_BOUND', `evidence is for ${ev.input_tree_sha256.slice(0, 16)}…, package inputs are ${h.slice(0, 16)}…`);
     if (!ev.edge_suite.ok || !ev.deployer_suite.ok || ev.edge_suite.code !== 0 || ev.deployer_suite.code !== 0) throw new KawaError('EVIDENCE_NOT_PASS', 'packaged evidence records a non-zero exit or a failed verdict');
     out.ok(`test evidence bound to these bytes: input tree ${h.slice(0, 16)}… · Edge ${ev.edge_suite.pass}/${ev.edge_suite.total} (exit 0) · deployer ${ev.deployer_suite.pass}/${ev.deployer_suite.tests} (exit 0)`);
-    out.info('the packaged evidence is a signed RECORD; independent assurance = re-run ./kawa-edge test-full on this ZIP (physical gate)');
+    // N-2 · the HMAC key is local to the installation that ran the tests. Where that key exists, an
+    // unsigned or altered record is refused; elsewhere the signature cannot be checked, and we say so.
+    if (hasEvidenceKey()) {
+      if (!verifySignature(ev)) throw new KawaError('EVIDENCE_UNSIGNED', 'packaged test evidence is not signed by this installation');
+      out.ok('test evidence signature verified (this is the installation that produced it)');
+    } else {
+      out.warn('test evidence signature NOT verifiable here (HMAC key is local to the producing installation): the record is not proof');
+    }
+    out.info('integrity anchor = the separately delivered .sha256; independent assurance = re-run ./kawa-edge test-full on this ZIP (physical gate)');
     const all = rel;
     out.ok(`raw ZIP entries (${entries.length}) = manifest + itself; no secrets, state, node_modules, user config or implicit root wrangler config`);
     for (const p of ['Dockerfile', 'docker-compose.yml', 'kawa-edge', 'README_NAS_INSTALL.md', 'RUNBOOK_VIGENTE.md', 'edge/package-lock.json', 'config/kawa-edge.example.json']) {

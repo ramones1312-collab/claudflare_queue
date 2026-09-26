@@ -27,6 +27,7 @@ test('PROD needs a STAGING PASS: none, or any tampered/insufficient one, is BLOC
       ['other build', { binding: 'f'.repeat(64) }],
       ['other account', { account: 'f'.repeat(32) }],
       ['PROD HUB_A settings never tested', { destinations: [{ id: 'HUB_A', enabled: true, timeout_ms: 20000 }, { id: 'HUB_B', enabled: true, timeout_ms: 10000 }] }],
+      ['HUB_A disabled in the tested STAGING run (N-4)', { destinations: [{ id: 'HUB_A', enabled: false, timeout_ms: 10000 }, { id: 'HUB_B', enabled: true, timeout_ms: 10000 }] }],
       ['STAGING no longer runs the certified builds', { builds: { 'kawa-edge-ingress-stg': 'e'.repeat(64) } }],
     ];
     for (const [name, tamper] of cases) {
@@ -57,6 +58,13 @@ test('add-hub --env prod is gated exactly like prod-deploy (F-03)', async () => 
     const z = await runCli(w.sb, w.api, ['add-hub', 'HUB_Z', '--env', 'prod', '--webhook-host', 'hub-z.example.com']);
     assert.equal(z.code, 2, z.text);
     assert.match(z.text, /HUB_Z was never gate-tested in STAGING/);
+    assert.equal(prodWrites(w.mock).length, 0);
+    // F-03 · the auditor's case: the Edge/deployer code changed after the STAGING PASS.
+    await fakeStagingPass(w.sb, w.mock, { binding: 'f'.repeat(64) });
+    w.sb.dropToken();
+    const c = await runCli(w.sb, w.api, ['add-hub', 'HUB_B', '--env', 'prod', '--webhook-host', 'hub-b.example.com']);
+    assert.equal(c.code, 2, c.text);
+    assert.match(c.text, /different deployer\/Edge\/wrangler build/);
     assert.equal(prodWrites(w.mock).length, 0);
   } finally { await w.close(); }
 });

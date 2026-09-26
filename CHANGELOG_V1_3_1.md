@@ -1,4 +1,21 @@
-# CHANGELOG · V1.3.1 (R2) respecto de V1.3.0 R4
+# CHANGELOG · V1.3.1 (R3) respecto de V1.3.0 R4
+
+## R3 (2026-09-26) · correcciones de la re-auditoría independiente de R2
+
+R2 no se entregó: una re-auditoría independiente encontró 2 P2 y 4 P3 nuevos en el mecanismo de R2 (ningún
+P0/P1) y tres afirmaciones exageradas en la respuesta a la auditoría. R3 los corrige. `edge/src/**` sigue
+byte-idéntico a R4.
+
+| Id | Cambio |
+|---|---|
+| N-1 (P2) | el lanzador ya no escribe ningún fichero como root: el manifiesto con el que se construyó la imagen se lee de la propia imagen (se elimina `state/.image-manifest` y su carrera con un enlace a directorio) |
+| N-2 (P2) | `verify-release` comprueba la firma de la evidencia empaquetada donde existe la clave (la instalación que la produjo) y, fuera de ella, avisa de que no es verificable; la afirmación «verify-release rechaza evidencia sin firma» se corrige |
+| N-3 (P3) | el `chown` del lanzador solo toca lo que es de root, nunca por un enlace ni un fichero con un segundo enlace duro; `chmod` sin seguir enlaces; `touch -h` donde existe |
+| N-4 (P3) | un destino **deshabilitado** en la ejecución STAGING no cuenta como probado para PROD |
+| N-5 (P3) | `verify-release` exige el hash publicado del manifiesto (línea 2 del `.sha256` o `--manifest-sha256`), rechaza nombres duplicados y cualquier byte del ZIP no descrito por el directorio central |
+| N-6 (P3) | una clave de evidencia vacía o malformada falla cerrado |
+| N-7 (P3) | el README verifica el ZIP con `sha256sum` del sistema **antes** de extraerlo |
+| F-03 | test añadido con el caso exacto del auditor (código cambiado tras el STAGING PASS → `add-hub --env prod` BLOCKED) |
 
 ## R2 (2026-09-26) · remediación de la auditoría externa de R1 (veredicto FAIL)
 

@@ -180,6 +180,8 @@ export async function findStagingPass(cfg, { prodDests = null } = {}) {
       for (const [id, d] of Object.entries(parse(wantProd))) {
         const t = tested[id];
         if (!t) why.push(`${id} was never gate-tested in STAGING`);
+        // N-4 · a destination that was DISABLED in STAGING received no signal from the gates: not tested.
+        else if (t.enabled === false) why.push(`${id} was disabled in the STAGING run: never gate-tested`);
         else if (JSON.stringify([t.timeout_ms, t.retry]) !== JSON.stringify([d.timeout_ms, d.retry])) why.push(`${id}: PROD timeout/retry differ from what STAGING tested`);
       }
     } catch (err) { why.push(`destinations: ${err.code || err.message}`); }
