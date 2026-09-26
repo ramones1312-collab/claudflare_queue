@@ -74,6 +74,9 @@ async function validateDestinations(env, list, where) {
       if (d.id === 'HUB_A' && d.webhook_host !== HARD_LOCKS.HUB_A_PUBLIC_HOST) {
         throw new KawaError('HARD_LOCK_HUB_A_HOST', `prod: HUB_A webhook_host must be ${HARD_LOCKS.HUB_A_PUBLIC_HOST} (hard lock)`);
       }
+      if (d.id !== 'HUB_A' && String(d.webhook_host).replace(/\.$/, '') === HARD_LOCKS.HUB_A_PUBLIC_HOST) {
+        throw new KawaError('HARD_LOCK_HUB_A_HOST', `prod: ${d.id} cannot point at HUB_A's ingress host (${HARD_LOCKS.HUB_A_PUBLIC_HOST})`);
+      }
     }
   }
   return parsed;
@@ -126,5 +129,7 @@ export function writeConfig(file, raw) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     fs.copyFileSync(file, `${file}.bak-${ts}`);
   }
-  fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n');
+  fs.renameSync(tmp, file);                           // atomic: never a half-written config
 }

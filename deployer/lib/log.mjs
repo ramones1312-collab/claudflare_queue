@@ -20,6 +20,8 @@ export function redact(text) {
   for (const v of [...secrets].sort((a, b) => b.length - a.length)) s = s.split(v).join('[REDACTED]');
   s = s.replace(/(\/webhook\/)[^\s/"'?#]{6,}/g, '$1[REDACTED]');
   s = s.replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1[REDACTED]');
+  // Generated path/admin/control tokens are 43-char base64url; mask any such run defensively.
+  s = s.replace(/(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g, '[REDACTED]');
   return s;
 }
 

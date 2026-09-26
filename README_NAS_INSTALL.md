@@ -62,7 +62,8 @@ sudo ./kawa-edge install
    que ya creaste; si algo no le pertenece o no cuadra, **se detiene sin cambiar nada** y explica qué.
 4. Despliega en orden: colas → receptores STAGING (uno por Hub) → ingress + Sequencer → consumer HUB_A →
    consumer HUB_B → admin temporal → verifica secretos.
-5. Ejecuta los **gates STAGING** (≈ 20 min, incluye un gate de 6 min de corte prolongado).
+5. Ejecuta los **gates STAGING** (≈ 20 min, incluye un gate de 6 min de corte prolongado). Con `--quick`
+   se omite ese gate y el resultado es `PARTIAL` (BLOCKED): **no** cuenta como STAGING PASS.
 6. Resultado: **`PASS  STAGING PASS`** o **`FAIL`** con el gate y el motivo exactos.
    Evidencia completa en `state/evidence/staging-gates-cloud-…-PASS.json`.
 
@@ -83,8 +84,9 @@ Solo para `install`/`gates`/`status` (los pasos PROD piden datos por teclado y r
 
 1. Crea `kawa-edge-nas/.env` con: `KAWA_COMMAND=install`, `KAWA_NONINTERACTIVE=1`, `KAWA_UID=<tu uid>`, `KAWA_GID=<tu gid>`
    (los ves en Panel de control → Usuario, o `id` por SSH).
-2. Crea `secrets/cloudflare_api_token` con el token (una línea). El instalador lo **lee, lo sobrescribe
-   y lo borra** al arrancar.
+2. Crea `secrets/cloudflare_api_token` con el token (una línea). El instalador lo lee, lo sobrescribe y lo
+   borra al arrancar. En btrfs con instantáneas eso **no** garantiza su destrucción física: prefiere el
+   prompt por SSH o rota el token al terminar (ver `secrets/README.md`).
 3. Container Manager → Proyecto → Crear → ruta `kawa-edge-nas` → usa `docker-compose.yml` → Construir e
    iniciar. El resultado aparece en el registro del contenedor y en `state/`.
 

@@ -92,7 +92,7 @@ function strictOrder(observations, seqs) {
   return { ok: JSON.stringify(first2xx) === JSON.stringify(want), order: first2xx, expected: want };
 }
 
-export function defineGates({ X, Y, includeLong, kind }) {
+export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   const T = kind === 'cloud' ? { deliver: 180e3, halt: 420e3, lost: 420e3 } : { deliver: 90e3, halt: 240e3, lost: 240e3 };
   const qX = names.queue('staging', X), qY = names.queue('staging', Y);
   const st = {};                                     // state carried between dependent gates
@@ -121,9 +121,11 @@ export function defineGates({ X, Y, includeLong, kind }) {
     const a = await h.send('A');
     expect(Array.isArray(a.destinations) && a.destinations.includes(X) && a.destinations.includes(Y), `destinations ${a.destinations}`);
     await h.waitFor(`both receivers accept seq ${a.seq}`, async () => (await h.got2xx(X, [a.seq])) && (await h.got2xx(Y, [a.seq])), T.deliver);
-    const sig = await h.waitFor('both deliveries DELIVERED', async () => { const s = await h.signal(a.seq); return s.deliveries.every(d => d.state === 'DELIVERED') && s.deliveries.length === 2 ? s : null; }, T.deliver);
+    expect(JSON.stringify([...a.destinations].sort()) === JSON.stringify([...all].sort()), `fan-out ${a.destinations} != enabled ${all}`);
+    const sig = await h.waitFor('every delivery DELIVERED', async () => { const s = await h.signal(a.seq); return s.deliveries.length === all.length && s.deliveries.every(d => d.state === 'DELIVERED') ? s : null; }, T.deliver);
     const ids = sig.deliveries.map(d => d.delivery_id).sort();
-    expect(JSON.stringify(ids) === JSON.stringify([`E${a.seq}:${X}`, `E${a.seq}:${Y}`].sort()), `delivery ids ${ids}`);
+    expect(JSON.stringify(ids) === JSON.stringify(all.map(d => `E${a.seq}:${d}`).sort()), `delivery ids ${ids}`);
+    expect(new Set(sig.deliveries.map(d => d.delivery_id)).size === all.length, 'duplicate delivery identity');
     return { edge_seq: a.seq, digest: a.digest, deliveries: sig.deliveries.map(d => ({ id: d.delivery_id, state: d.state, attempts: d.delivery_attempts })) };
   });
 
@@ -162,6 +164,10 @@ export function defineGates({ X, Y, includeLong, kind }) {
   gate('F', `Lost response on ${X}: no advance, retry, then DELIVERED; ${Y} unaffected`, async (h) => {
     await h.control(X, 'silent_once');
     const a = await h.send('F');
+    // While the answer is lost, HUB_A's head must not move past this alert.
+    await h.waitFor(`${X} observes the silent attempt`, async () => (await h.obs(X, [a.seq])).some(o => o.outcome === 'SILENT'), T.deliver);
+    const during = await h.stats();
+    expect(during.destinations[X].next_seq_expected <= a.seq, `${X} head advanced to ${during.destinations[X].next_seq_expected} without an acceptance`);
     await h.waitFor(`${Y} accepts`, () => h.got2xx(Y, [a.seq]), T.deliver);
     await h.waitFor(`${X} accepts after the lost response`, () => h.got2xx(X, [a.seq]), T.lost);
     const o = await h.obs(X, [a.seq]);
@@ -212,7 +218,7 @@ export function defineGates({ X, Y, includeLong, kind }) {
       seqs = [(await h.send('ISO-XY')).seq, (await h.send('ISO-XY')).seq];
       await sleep(15000);
       for (const d of [X, Y]) expect((await h.obs(d, seqs)).length === 0, `${d} received while paused`);
-      for (const s of seqs) { const sig = await h.signal(s); expect(sig.found && sig.received && sig.deliveries.every(d => ['PENDING_DISPATCH', 'DISPATCHED'].includes(d.state)), `seq ${s} not durable/pending`); }
+      for (const s of seqs) { const sig = await h.signal(s); expect(sig.found && sig.received && sig.deliveries.filter(d => d.destination_id === X || d.destination_id === Y).every(d => ['PENDING_DISPATCH', 'DISPATCHED'].includes(d.state)), `seq ${s} not durable/pending for ${X}/${Y}`); }
       await t.resume(qY);
       await h.waitFor(`${Y} converges first`, () => h.got2xx(Y, seqs), T.halt);
       expect((await h.obs(X, seqs)).length === 0, `${X} received while still paused`);
@@ -221,7 +227,7 @@ export function defineGates({ X, Y, includeLong, kind }) {
     return { edge_seqs: seqs, order_of_convergence: [Y, X] };
   }, cloudOnly);
 
-  gate('G', `FAILED_PERMANENT on ${Y} (permanent 4xx): DLQ record, halt of ${Y} only; ${X} delivers`, async (h, t) => {
+  gate('G', `FAILED_PERMANENT on ${Y} (permanent 4xx): DLQ record (platform-verified when readable), halt of ${Y} only; ${X} delivers`, async (h, t) => {
     await h.control(Y, 'permanent4xx');
     const a = await h.send('G');
     st.s1 = a.seq;
@@ -232,9 +238,18 @@ export function defineGates({ X, Y, includeLong, kind }) {
     expect(s.destinations[Y].halted_seq === a.seq, `${Y} halted_seq ${s.destinations[Y].halted_seq}`);
     expect(s.destinations[X].halted_seq === null, `${X} must not be halted`);
     await h.waitFor(`${X} accepts`, () => h.got2xx(X, [a.seq]), T.deliver);
-    const backlog = await t.dlqBacklog(names.dlq('staging', Y));
-    return { edge_seq: a.seq, state: dy.state, halt_reason: dy.halt_reason, halted_seq: a.seq,
-             dlq: backlog === null ? 'record implied: the consumer calls haltedDlq() only after DLQ.send() is confirmed (R4 contract, unit CASE H); backlog metric not readable with this token' : `backlog ${backlog}` };
+    // DLQ record. With "Account Analytics: Read" it is verified on the platform (nobody consumes the DLQ,
+    // so its backlog must reach >= 1); a metric that stays 0 is a FAIL. Without that permission the
+    // evidence says so explicitly: the record is then proven only by contract (the consumer calls
+    // haltedDlq() only after DLQ.send() is confirmed; workerd test CASE H).
+    let dlq;
+    const first = await t.dlqBacklog(names.dlq('staging', Y));
+    if (first === null) dlq = { verified: false, basis: 'contract (R4 CASE H); backlog metric unreadable without Account Analytics: Read' };
+    else {
+      const b = await h.waitFor(`${Y} DLQ backlog >= 1`, async () => { const v = await t.dlqBacklog(names.dlq('staging', Y)); return v >= 1 ? v : null; }, 300e3);
+      dlq = { verified: true, backlog: b };
+    }
+    return { edge_seq: a.seq, state: dy.state, halt_reason: dy.halt_reason, halted_seq: a.seq, dlq };
   });
 
   gate('H', `N+1 blocked ONLY on halted ${Y}; its backlog stays durable (R21)`, async (h) => {
@@ -261,8 +276,7 @@ export function defineGates({ X, Y, includeLong, kind }) {
     expect(r.status === 200 && r.body.ok, `retry refused: ${JSON.stringify(r.body)}`);
     const seqs = [st.s1, st.s2, st.s3];
     await h.waitFor(`${Y} receives ${seqs}`, () => h.got2xx(Y, seqs), T.halt);
-    const o = (await h.obs(Y, seqs)).filter(x => OK2XX.has(x.outcome));
-    const so = strictOrder(o, seqs);
+    const so = strictOrder(await h.obs(Y, seqs), seqs);
     expect(so.ok, `${Y} order after retry: ${JSON.stringify(so.order)}`);
     expect((await h.stats()).destinations[Y].halted_seq === null, 'halt marker not cleared');
     return { resumed: seqs, order: so.order, refused: ['no destination_id', 'force over HTTP'] };
@@ -286,12 +300,17 @@ export function defineGates({ X, Y, includeLong, kind }) {
 
   gate('L', 'Durable Object restart (ingress redeploy) with a pending delivery: sequence continues, nothing lost', async (h, t) => {
     await t.pause(qX);
-    let a, b, before;
+    let a, b, before, restart;
     try {
       a = await h.send('L');
       await h.waitFor(`${Y} accepts`, () => h.got2xx(Y, [a.seq]), T.deliver);
       before = (await h.stats()).counter;
+      const dep0 = await t.deploymentId();
       await t.redeployIngress();
+      const dep1 = await t.deploymentId();
+      // Proof that the ingress (and so its Durable Object) was really replaced, not merely still up.
+      expect(dep0 !== dep1 && dep1 !== null, `ingress deployment unchanged (${dep0} -> ${dep1}): no restart happened`);
+      restart = { from: dep0, to: dep1 };
       await h.waitFor('ingress back after redeploy', async () => { try { return (await t.fetch(`${t.base.ingress}/`, { method: 'GET' })).status === 405; } catch { return false; } }, T.deliver);
       const after = await h.stats();
       expect(after.schema_version === 2 && after.counter === before, `counter ${before} -> ${after.counter}`);
@@ -301,7 +320,7 @@ export function defineGates({ X, Y, includeLong, kind }) {
     await h.waitFor(`${X} receives the pending and the new alert`, () => h.got2xx(X, [a.seq, b.seq]), T.halt);
     const so = strictOrder(await h.obs(X, [a.seq, b.seq]), [a.seq, b.seq]);
     expect(so.ok, 'order after restart');
-    return { pending_across_restart: a.seq, first_after_restart: b.seq };
+    return { pending_across_restart: a.seq, first_after_restart: b.seq, deployment: restart };
   }, cloudOnly);
 
   gate('K', 'Transport outage longer than the 5-min redispatch lease: recovers without intervention', async (h, t) => {
@@ -321,17 +340,22 @@ export function defineGates({ X, Y, includeLong, kind }) {
 
   gate('BYTE', 'Byte-for-byte: every delivered body hashes to what was sent', async (h) => {
     let checked = 0;
+    expect(h.sent.size > 0, 'no alert was sent in this run');
     for (const d of [X, Y]) {
       const r = await h.report(d);
       expect(r.digest_mismatches === 0, `${d}: ${r.digest_mismatches} digest mismatches`);
+      const seen = new Set();
       for (const o of r.observations) {
         const s = h.sent.get(Number(o.edge_seq));
         if (!s) continue;
         expect(o.received_digest === s.sha, `${d} seq ${o.edge_seq}: received bytes differ from the bytes sent`);
-        checked++;
+        seen.add(Number(o.edge_seq)); checked++;
       }
+      // Not vacuous: every alert of this run must have reached this receiver at least once.
+      const missing = [...h.sent.keys()].filter(k => !seen.has(k));
+      expect(missing.length === 0, `${d} never observed seq ${missing.join(',')}`);
     }
-    return { observations_checked: checked, digest_mismatches: 0 };
+    return { alerts: h.sent.size, observations_checked: checked, digest_mismatches: 0 };
   });
 
   gate('RB', 'Rollback readiness: every destination drained, no halt, gate ok:true', async (h) => {
@@ -362,20 +386,30 @@ export async function repairStaging(t, secrets, ids) {
   await h.waitFor('staging drained', async () => { const x = await h.stats(); return ids.every(id => x.destinations[id].unresolved === 0); }, 600e3);
 }
 
-export async function runGates({ target, secrets, dests, includeLong = false, evidenceDir, meta = {} }) {
+export async function runGates({ target, secrets, dests, all = dests, includeLong = false, evidenceDir, meta = {} }) {
   const [X, Y] = dests;
   const runId = crypto.randomBytes(4).toString('hex');
   const h = harness(target, secrets, runId);
-  const gates = defineGates({ X, Y, includeLong, kind: target.kind });
+  const gates = defineGates({ X, Y, all, includeLong, kind: target.kind });
   const results = [];
   let failed = null;
   const t0 = Date.now();
+  const cleanupErrors = [];
+  const cleanup = async () => {
+    // Never leave STAGING paused or scripted, whatever happened. 'ok' keeps the evidence ledger.
+    for (const d of [X, Y]) {
+      try { await target.resume(names.queue('staging', d)); } catch (err) { cleanupErrors.push(`resume ${d}: ${redact(err.message)}`); }
+      try { await h.control(d, 'ok'); } catch (err) { cleanupErrors.push(`receiver ${d}: ${redact(err.message)}`); }
+    }
+  };
+  const onSignal = (sig) => { out.warn(`${sig}: restoring STAGING (resuming queues) before exit…`); cleanup().finally(() => process.exit(130)); };
+  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal);
   out.step(`STAGING gates · target=${target.kind} · destinations ${X}, ${Y} · run ${runId}`);
   try {
     for (const g of gates) {
       if (failed) { results.push({ id: g.id, title: g.title, status: 'NOT_RUN' }); continue; }
       if (g.cloudOnly && target.kind !== 'cloud') { results.push({ id: g.id, title: g.title, status: 'CLOUD_ONLY', note: 'needs a Cloudflare platform operation; runs in ./kawa-edge install' }); out.info(`cloud ${g.id.padEnd(6)} ${g.title} (Cloudflare-only gate)`); continue; }
-      if (g.optional) { results.push({ id: g.id, title: g.title, status: 'SKIPPED', note: 'long gate; run with --include-long' }); out.info(`skip  ${g.id} ${g.title} (long gate; --include-long)`); continue; }
+      if (g.optional) { results.push({ id: g.id, title: g.title, status: 'SKIPPED', note: 'long gate skipped (--quick): this run is PARTIAL and is not a STAGING PASS' }); out.warn(`skip  ${g.id} ${g.title} (--quick)`); continue; }
       const g0 = Date.now();
       try {
         const evidence = await g.run(h, target);
@@ -388,15 +422,16 @@ export async function runGates({ target, secrets, dests, includeLong = false, ev
       }
     }
   } finally {
-    // Never leave STAGING paused or scripted, whatever happened.
-    for (const d of [X, Y]) {
-      try { await target.resume(names.queue('staging', d)); } catch { /* reported by status */ }
-      try { await h.control(d, 'ok'); } catch { /* idem; 'ok' keeps the evidence ledger */ }
-    }
+    await cleanup();
+    process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal);
   }
-  const mandatory = results.filter(r => !['SKIPPED', 'CLOUD_ONLY'].includes(r.status));
-  const result = !failed && mandatory.every(r => r.status === 'PASS') ? 'PASS' : 'FAIL';
-  const report = { schema: 'kawa.edge.staging.gates.v1', result, target: target.kind, run_id: runId,
+  for (const e of cleanupErrors) out.fail(`cleanup: ${e}`);
+  // PASS: every gate this target can run passed and cleanup succeeded. A cloud run with a skipped gate
+  // is PARTIAL (never a STAGING PASS); the local rehearsal never claims the CLOUD_ONLY gates.
+  const ran = results.filter(r => r.status !== 'CLOUD_ONLY');
+  const result = failed || cleanupErrors.length ? 'FAIL' : ran.every(r => r.status === 'PASS') ? 'PASS' : 'PARTIAL';
+  const report = { schema: 'kawa.edge.staging.gates.v1', result, target: target.kind, run_id: runId, cleanup_errors: cleanupErrors,
+                   mandatory_gates: gates.filter(g => target.kind === 'cloud' || !g.cloudOnly).map(g => g.id),
                    started: new Date(t0).toISOString(), duration_s: Math.round((Date.now() - t0) / 1000),
                    destinations: [X, Y], ...meta, gates: results };
   fs.mkdirSync(evidenceDir, { recursive: true });

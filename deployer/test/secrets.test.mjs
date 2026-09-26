@@ -25,3 +25,35 @@ test('redaction masks registered secrets, webhook path tokens and bearer tokens'
   const s = redact('a super-secret-value-123 b https://h/webhook/abcdefghij c Bearer abcdefghijklmnop');
   assert.doesNotMatch(s, /super-secret|abcdefghij|abcdefghijklmnop/);
 });
+
+import { validateHaltUrl, checkAndRecordFingerprint } from '../lib/secrets.mjs';
+import { validateConfig } from '../lib/config.mjs';
+
+test('halt-notification URL can never reach a Hub (it bypasses the Service Binding)', () => {
+  assert.ok(validateHaltUrl('https://ntfy.example.org/kawa-halts', ['hub-b.example.com']));
+  assert.ok(validateHaltUrl('https://halt-notify.invalid/kawa-edge-stg'));
+  for (const [u, code] of [
+    [`https://${H}/anything`, 'HALT_URL_IS_HUB'],
+    [`https://${H}./x`, 'HALT_URL_IS_HUB'],
+    ['https://HUB-B.example.com/x', 'HALT_URL_IS_HUB'],
+    ['https://collector.example.org/webhook/abc', 'HALT_URL_IS_HUB'],
+    ['https://collector.example.org:8180/x', 'HARD_LOCK_CONTROL_PORT'],
+    ['https://collector.example.org:8443/x', 'HALT_URL_INVALID'],
+    ['http://collector.example.org/x', 'HALT_URL_INVALID'],
+  ]) assert.throws(() => validateHaltUrl(u, ['hub-b.example.com']), { code }, u);
+});
+
+test('the same secret for two Hubs is refused even within one run', () => {
+  const tok = 'Z'.repeat(32);
+  checkAndRecordFingerprint('HUB_X', `https://x.example.com/webhook/${tok}`);
+  assert.throws(() => checkAndRecordFingerprint('HUB_Y', `https://y.example.com/webhook/${tok}`), { code: 'WEBHOOK_SECRET_REUSED' });
+});
+
+test('no other destination may point at HUB_A\'s ingress host', async () => {
+  const cfg = { schema: 'kawa.edge.nas.config.v1', cloudflare: { account_id: '0'.repeat(32) },
+    staging: { destinations: [{ id: 'HUB_A' }, { id: 'HUB_B' }] },
+    prod: { destinations: [{ id: 'HUB_A', webhook_host: H }, { id: 'HUB_B', webhook_host: H + '.' }] } };
+  await assert.rejects(validateConfig(cfg));
+  cfg.prod.destinations[1].webhook_host = H;
+  await assert.rejects(validateConfig(cfg), { code: 'HARD_LOCK_HUB_A_HOST' });
+});

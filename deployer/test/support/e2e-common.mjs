@@ -21,12 +21,14 @@ export async function world(opts = {}) {
 }
 
 
-export async function fakeStagingPass(sb) {
+export async function fakeStagingPass(sb, { skip = null } = {}) {
   // Evidence as `install` writes it after a Cloudflare STAGING PASS (only the fields prod-deploy reads).
-  const { edgeSourcesHash } = await import('../../lib/render.mjs');
+  const { stagingBindingHash } = await import('../../lib/render.mjs');
   const { EDGE_DIR } = await import('../../lib/paths.mjs');
+  const { pinnedVersion } = await import('../../lib/wrangler.mjs');
+  const ids = ['G00', 'A', 'C', 'E', 'D', 'F', 'M', 'ISO-X', 'ISO-Y', 'ISO-XY', 'G', 'H', 'I', 'J', 'L', 'K', 'BYTE', 'RB'];
   const dir = path.join(sb.stateDir, 'evidence');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'staging-gates-cloud-2026-09-26T00-00-00-000Z-PASS.json'),
-    JSON.stringify({ result: 'PASS', target: 'cloud', edge_sources_sha256: edgeSourcesHash(EDGE_DIR), gates: [{ id: 'RB', status: 'PASS' }] }));
+    JSON.stringify({ result: 'PASS', target: 'cloud', binding_sha256: stagingBindingHash(EDGE_DIR, pinnedVersion()), mandatory_gates: ids, gates: ids.map(id => ({ id, status: id === skip ? 'SKIPPED' : 'PASS' })) }));
 }

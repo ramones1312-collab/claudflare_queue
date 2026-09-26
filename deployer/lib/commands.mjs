@@ -5,16 +5,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { loadConfig } from './config.mjs';
-import { out, KawaError } from './log.mjs';
+import { out, KawaError, redact } from './log.mjs';
 import { createWrangler } from './wrangler.mjs';
 import { createCfApi } from './cfapi.mjs';
-import { acquireApiToken, ensureStagingSecrets, loadStagingSecrets, promptHidden, promptLine, deleteStagingSecrets } from './secrets.mjs';
+import { validateHaltUrl, acquireApiToken, ensureStagingSecrets, loadStagingSecrets, promptHidden, promptLine, deleteStagingSecrets } from './secrets.mjs';
 import { localChecks, cloudChecks } from './preflight.mjs';
 import { execute, loadDeployed, secretsFingerprint } from './deploy.mjs';
 import { runGates, repairStaging } from './gates/run.mjs';
 import { cloudTarget, localTarget } from './gates/targets.mjs';
 import { names } from './naming.mjs';
-import { edgeSourcesHash } from './render.mjs';
+import { edgeSourcesHash, stagingBindingHash } from './render.mjs';
+import { pinnedVersion } from './wrangler.mjs';
 import { EDGE_DIR } from './paths.mjs';
 import { BUILD_DIR, STATE_DIR } from './paths.mjs';
 import * as prod from './prod.mjs';
@@ -22,17 +23,29 @@ import * as release from './release.mjs';
 import * as addhub from './addhub.mjs';
 
 export function flags(args) {
+  const f0 = parse(args);
+  if (f0.env !== undefined && !['staging', 'prod'].includes(f0.env)) throw new KawaError('USAGE_ENV', `--env must be staging or prod (got "${f0.env}")`);
+  return f0;
+}
+function parse(args) {
   const f = { _: [] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith('--')) {
-      const [k, v] = a.slice(2).split('=');
+      const eq = a.indexOf('=');
+      const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
+      const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) f[k] = v;
-      else if (args[i + 1] && !args[i + 1].startsWith('--') && ['env', 'target', 'timeout-ms', 'files', 'out', 'webhook-host', 'set-webhook'].includes(k)) f[k] = args[++i];
+      else if (args[i + 1] && !args[i + 1].startsWith('--') && ['env', 'target', 'timeout-ms', 'files', 'out', 'webhook-host', 'set-webhook', 'yes'].includes(k)) f[k] = args[++i];
       else f[k] = true;
     } else f._.push(a);
   }
   return f;
+}
+
+/** Every Hub ingress host known to the config, plus HUB_A's hard-locked host. */
+export function hubHostsOf(cfg) {
+  return [...((cfg.envs.prod && cfg.envs.prod.destinations) || []).map(d => d.webhook_host).filter(Boolean)];
 }
 
 export function timer() {
@@ -52,7 +65,7 @@ export function writeReport(kind, data) {
   const dir = path.join(STATE_DIR, 'reports');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  fs.writeFileSync(file, redact(JSON.stringify(data, null, 2)));   // defence in depth
   return file;
 }
 
@@ -71,6 +84,11 @@ function gateDests(cfg) {
   if (ids.length < 2) throw new KawaError('GATES_NEED_TWO_DESTINATIONS', 'the STAGING gates need at least two enabled destinations (isolation gates)');
   return ids.slice(0, 2);
 }
+function gateOutcome(g) {
+  if (g.result === 'PARTIAL') return { result: 'BLOCKED', detail: 'STAGING PARTIAL: a gate was skipped (--quick); this is NOT a STAGING PASS', report: g.file };
+  return { result: g.result, detail: `STAGING ${g.result}`, report: g.file };
+}
+const enabledIds = (cfg) => cfg.envs.staging.parsed.filter(d => d.enabled).map(d => d.id);
 
 async function stagingPrepare(ctx, f) {
   const tm = timer();
@@ -79,10 +97,12 @@ async function stagingPrepare(ctx, f) {
   tm.mark('local_preflight_ms');
   const cloud = await cloudContext(cfg);
   let halt = null;
+  const hubHosts = hubHostsOf(cfg);
   if (!loadStagingSecrets()) {
     halt = await promptHidden('STAGING halt-notification URL (optional, input hidden; Enter = none): ').catch(() => '');
+    if (halt) validateHaltUrl(halt, hubHosts);
   }
-  const { secrets, created } = ensureStagingSecrets(local.plan.workers.filter(w => w.role === 'receiver').map(w => w.dest), halt || null);
+  const { secrets, created } = ensureStagingSecrets(local.plan.workers.filter(w => w.role === 'receiver').map(w => w.dest), halt || null, hubHosts);
   if (created.length) out.info(`STAGING tokens generated: ${created.join(', ')} (kept in state/staging/secrets.json, 0600)`);
   const secretsFor = stagingSecretsFor(secrets);
   for (const w of local.plan.workers) w.secretsFp = secretsFingerprint(secretsFor(w));
@@ -142,11 +162,11 @@ export const COMMANDS = {
       const target = cloudTarget({ subdomain: p.pre.subdomain, wrangler: p.cloud.wrangler, plan: p.local.plan, api: p.cloud.api, queueIds });
       const dests = gateDests(p.cfg);
       if (f.repair) await repairStaging(target, p.secrets, dests);
-      const g = await runGates({ target, secrets: p.secrets, dests, includeLong: !f.quick, evidenceDir: path.join(STATE_DIR, 'evidence'),
-                                 meta: { edge_sources_sha256: edgeSourcesHash(EDGE_DIR), builds: Object.fromEntries(p.local.plan.workers.map(w => [w.name, w.build])) } });
+      const g = await runGates({ target, secrets: p.secrets, dests, all: enabledIds(p.cfg), includeLong: !f.quick, evidenceDir: path.join(STATE_DIR, 'evidence'),
+                                 meta: { edge_sources_sha256: edgeSourcesHash(EDGE_DIR), binding_sha256: stagingBindingHash(EDGE_DIR, pinnedVersion()), builds: Object.fromEntries(p.local.plan.workers.map(w => [w.name, w.build])) } });
       p.tm.mark('gates_ms');
-      const file = writeReport('install-staging', { result: g.result, applied: done, gates_evidence: g.file, timings: p.tm.marks });
-      return { result: g.result, detail: `STAGING ${g.result}`, report: g.file };
+      writeReport('install-staging', { result: g.result, applied: done, gates_evidence: g.file, timings: p.tm.marks });
+      return gateOutcome(g);
     },
   },
 
@@ -161,9 +181,9 @@ export const COMMANDS = {
       const target = cloudTarget({ subdomain: p.pre.subdomain, wrangler: p.cloud.wrangler, plan: p.local.plan, api: p.cloud.api, queueIds });
       const dests = gateDests(p.cfg);
       if (f.repair) await repairStaging(target, p.secrets, dests);
-      const g = await runGates({ target, secrets: p.secrets, dests, includeLong: !f.quick, evidenceDir: path.join(STATE_DIR, 'evidence'),
-                                 meta: { edge_sources_sha256: edgeSourcesHash(EDGE_DIR), builds: Object.fromEntries(p.local.plan.workers.map(w => [w.name, w.build])) } });
-      return { result: g.result, detail: `STAGING ${g.result}`, report: g.file };
+      const g = await runGates({ target, secrets: p.secrets, dests, all: enabledIds(p.cfg), includeLong: !f.quick, evidenceDir: path.join(STATE_DIR, 'evidence'),
+                                 meta: { edge_sources_sha256: edgeSourcesHash(EDGE_DIR), binding_sha256: stagingBindingHash(EDGE_DIR, pinnedVersion()), builds: Object.fromEntries(p.local.plan.workers.map(w => [w.name, w.build])) } });
+      return gateOutcome(g);
     },
   },
 
@@ -182,9 +202,9 @@ export const COMMANDS = {
       out.step('Starting the local STAGING topology (Miniflare/workerd, exact dry-run bundles)');
       const target = await localTarget({ plan: local.plan, secrets, persistDir: path.join(tmp, 'persist'), bundleDir: path.join(tmp, 'bundles'), wrangler });
       try {
-        const g = await runGates({ target, secrets, dests, includeLong: !!f['include-long'], evidenceDir: path.join(STATE_DIR, 'evidence'),
+        const g = await runGates({ target, secrets, dests, all: enabledIds(cfg), includeLong: !!f['include-long'], evidenceDir: path.join(STATE_DIR, 'evidence'),
                                    meta: { note: 'LOCAL REHEARSAL — does not replace the Cloudflare STAGING gate' } });
-        return { result: g.result, detail: `LOCAL REHEARSAL ${g.result} (not a STAGING PASS)`, report: g.file };
+        return { result: g.result === 'PASS' ? 'PASS' : 'FAIL', detail: `LOCAL REHEARSAL ${g.result} (not a STAGING PASS)`, report: g.file };
       } finally {
         await target.close();
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -197,6 +217,7 @@ export const COMMANDS = {
     run: async (ctx) => {
       const f = flags(ctx.args); const env = f.env || f._[0] || 'staging';
       const cfg = await loadConfig(ctx.configFile);
+      if (!cfg.envs[env]) throw new KawaError('CONFIG_NO_ENV', `config has no "${env}" section`);
       const cloud = await cloudContext(cfg);
       for (const d of cfg.envs[env].parsed) { await cloud.wrangler.resumeDelivery(names.queue(env, d.id)); out.ok(`resumed ${names.queue(env, d.id)}`); }
       return { result: 'PASS' };

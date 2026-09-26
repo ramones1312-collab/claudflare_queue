@@ -263,3 +263,17 @@ export function edgeSourcesHash(edgeDir) {
   }
   return h.digest('hex');
 }
+
+/**
+ * What a STAGING PASS certifies for PROD: the Edge code, the config renderer (retries, batch size,
+ * compatibility date, per-consumer DESTINATIONS) and the pinned wrangler that bundles and uploads.
+ * Change any of them and an old STAGING PASS no longer authorises PROD.
+ */
+export function stagingBindingHash(edgeDir, wranglerVersion) {
+  const here = path.dirname(new URL(import.meta.url).pathname);
+  const h = crypto.createHash('sha256');
+  h.update(edgeSourcesHash(edgeDir));
+  for (const f of ['render.mjs', 'naming.mjs']) h.update(fs.readFileSync(path.join(here, f)));
+  h.update(`wrangler@${wranglerVersion}`);
+  return h.digest('hex');
+}

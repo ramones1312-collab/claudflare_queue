@@ -2,7 +2,6 @@
 **/node_modules
 **/.wrangler
 .git
-.gitignore
 .env
 state
 secrets/*
@@ -12,3 +11,9 @@ config/*.bak-*
 dist
 build
 *.log
+**/.dev.vars
+.npmrc
+**/.npmrc
+*.zip
+*.sha256
+.claude

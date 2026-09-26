@@ -80,7 +80,11 @@ export async function addHub(ctx, f) {
     const file = writeReport(`add-hub-${env}-${id}`, { id, env, applied: done, isolation: 'SKIPPED' });
     return { result: 'BLOCKED', detail: `${id} provisioned in STAGING; isolation NOT verified`, report: file };
   }
-  if (env === 'staging') isolation = await stagingIsolationCheck(cloud, next, id, before);
+  const added = next.envs[env].parsed.find(d => d.id === id);
+  if (env === 'staging' && !added.enabled) {
+    isolation = 'not applicable: added disabled (receives nothing until enabled)';
+    out.info(`${id} added DISABLED: it receives nothing; enable it in config/kawa-edge.json and run ./kawa-edge install`);
+  } else if (env === 'staging') isolation = await stagingIsolationCheck(cloud, next, id, before);
   else out.warn('PROD: no synthetic alert is ever sent (it would reach real Hubs). Verify with ./kawa-edge status --env prod.');
   const file = writeReport(`add-hub-${env}-${id}`, { id, env, applied: done, isolation });
   return { result: 'PASS', detail: `${id} added to ${env.toUpperCase()}; starts at the next accepted alert (no history)`, report: file };
@@ -92,19 +96,19 @@ async function stagingIsolationCheck(cloud, cfg, id, before) {
   const sub = await cloud.api.subdomain();
   const base = (n) => `https://${n}.${sub}.workers.dev`;
   const body = JSON.stringify({ signal_id: `STG-ADDHUB-${id}-${crypto.randomBytes(3).toString('hex')}`, source: 'kawa-edge-add-hub-check', pad: 'x'.repeat(16) });
-  const res = await fetch(`${base(names.ingress('staging'))}/webhook/${secrets.WEBHOOK_PATH_TOKEN}`, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  const res = await fetch(`${base(names.ingress('staging'))}/webhook/${secrets.WEBHOOK_PATH_TOKEN}`, { method: 'POST', body, headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(30000) });
   const j = await res.json();
   if (res.status !== 202 || !j.destinations.includes(id)) throw new KawaError('ADD_HUB_NOT_FANNED_OUT', `ingress answered ${res.status}, destinations ${j.destinations}`);
   const enabled = cfg.envs.staging.parsed.filter(d => d.enabled).map(d => d.id);
   const t0 = Date.now();
   for (;;) {
-    const got = await Promise.all(enabled.map(async d => ((await (await fetch(`${base(names.receiver('staging', d))}/report`)).json()).observations || [])
+    const got = await Promise.all(enabled.map(async d => ((await (await fetch(`${base(names.receiver('staging', d))}/report`, { signal: AbortSignal.timeout(30000) })).json()).observations || [])
       .some(o => Number(o.edge_seq) === j.edge_seq && ['ACCEPTED', 'DUPLICATE'].includes(o.outcome))));
     if (got.every(Boolean)) break;
     if (Date.now() - t0 > 180e3) throw new KawaError('ADD_HUB_ISOLATION', `seq ${j.edge_seq} not received by: ${enabled.filter((_, i) => !got[i]).join(', ')}`);
     await new Promise(r => setTimeout(r, 3000));
   }
-  const stats = (await (await fetch(`${base(names.admin('staging'))}/stats`, { headers: { authorization: `Bearer ${secrets.ADMIN_TOKEN}` } })).json()).stats;
+  const stats = (await (await fetch(`${base(names.admin('staging'))}/stats`, { headers: { authorization: `Bearer ${secrets.ADMIN_TOKEN}` }, signal: AbortSignal.timeout(30000) })).json()).stats;
   const d = stats.destinations[id];
   if (!d || d.next_seq_expected !== j.edge_seq + 1) throw new KawaError('ADD_HUB_HISTORY', `${id} head is ${d && d.next_seq_expected}, expected ${j.edge_seq + 1} (it must start at the first alert after it was added)`);
   out.ok(`isolation check: seq ${j.edge_seq} delivered to ${enabled.join(', ')}; ${id} head ${d.next_seq_expected} (no history)`);

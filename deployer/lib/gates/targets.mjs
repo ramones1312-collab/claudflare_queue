@@ -19,6 +19,7 @@ import { MAIN } from '../render.mjs';
 import { names } from '../naming.mjs';
 
 export function cloudTarget({ subdomain, wrangler, plan, api, queueIds = {} }) {
+  const ingressName = names.ingress('staging');
   const url = (name) => `https://${name}.${subdomain}.workers.dev`;
   const ingressWorker = plan.workers.find(w => w.role === 'ingress');
   return {
@@ -30,6 +31,7 @@ export function cloudTarget({ subdomain, wrangler, plan, api, queueIds = {} }) {
     // Same bytes, same config, new version: this restarts the Durable Object on Cloudflare.
     redeployIngress: async () => { await wrangler.deploy(ingressWorker.configPath); },
     dlqBacklog: async (queue) => (queueIds[queue] ? api.queueBacklog(queueIds[queue]) : null),
+    deploymentId: () => api.latestDeploymentId(ingressName),
     // Cloudflare needs time: queue delivery, retries (2 s WAIT, 60 s HALT) and leases (60 s).
     timeScale: 1,
     close: async () => {},
@@ -91,6 +93,7 @@ export async function localTarget({ plan, secrets, persistDir, bundleDir, wrangl
     resume: async (queue) => { detached.delete(queue); await restart(); },
     redeployIngress: restart,
     dlqBacklog: async () => null,
+    deploymentId: async () => null,
     timeScale: 1,
     runtimeLog: () => logs.join(''),
     close: async () => { await mf.dispose(); },

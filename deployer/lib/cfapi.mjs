@@ -12,7 +12,18 @@ const PERMISSION = {
   analytics: 'Account · Account Analytics · Read',
 };
 
-export function createCfApi({ token, accountId, base = process.env.CLOUDFLARE_API_BASE_URL || 'https://api.cloudflare.com/client/v4' }) {
+export const OFFICIAL_API = 'https://api.cloudflare.com/client/v4';
+
+/** The token may only ever be sent to Cloudflare, or to a loopback mock in the deployer's own tests. */
+export function apiBase() {
+  const b = process.env.CLOUDFLARE_API_BASE_URL;
+  if (!b) return OFFICIAL_API;
+  const u = new URL(b);
+  if (b.startsWith(OFFICIAL_API) || (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname))) return b;
+  throw new KawaError('API_BASE_REFUSED', `CLOUDFLARE_API_BASE_URL may only be ${OFFICIAL_API} or a loopback test mock`);
+}
+
+export function createCfApi({ token, accountId, base = apiBase() }) {
   async function call(method, path, { body, perm, allow404 = false } = {}) {
     let res;
     try {
@@ -80,6 +91,14 @@ export function createCfApi({ token, accountId, base = process.env.CLOUDFLARE_AP
     async subdomain() {
       const j = await call('GET', `${A}/workers/subdomain`, { perm: 'scripts', allow404: true });
       return j && j.result ? j.result.subdomain : null;
+    },
+    /** Id of the newest deployment of a Worker (changes on every deploy). */
+    async latestDeploymentId(name) {
+      const j = await call('GET', `${A}/workers/scripts/${encodeURIComponent(name)}/deployments`, { perm: 'scripts', allow404: true });
+      const list = (j && j.result && (j.result.deployments || j.result)) || [];
+      const arr = Array.isArray(list) ? list : [];
+      if (!arr.length) return null;
+      return [...arr].sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0].id || null;
     },
     doNamespaces: () => paged(`${A}/workers/durable_objects/namespaces`, 'scripts'),
     listQueues: () => paged(`${A}/queues`, 'queues'),

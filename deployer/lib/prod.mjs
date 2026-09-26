@@ -15,11 +15,12 @@ import { out, KawaError, redact } from './log.mjs';
 import { createWrangler } from './wrangler.mjs';
 import { localChecks, cloudChecks, requiredSecrets } from './preflight.mjs';
 import { execute, loadDeployed } from './deploy.mjs';
-import { renderEnv, edgeSourcesHash } from './render.mjs';
+import { renderEnv, stagingBindingHash } from './render.mjs';
+import { pinnedVersion } from './wrangler.mjs';
 import { names, MANAGED_VAR, BUILD_VAR } from './naming.mjs';
 import { EDGE_DIR, STATE_DIR } from './paths.mjs';
-import { promptHidden, promptLine, validateWebhookUrl, checkAndRecordFingerprint, randomToken, loadStagingSecrets, deleteStagingSecrets } from './secrets.mjs';
-import { cloudContext, writeReport } from './commands.mjs';
+import { validateHaltUrl, promptHidden, promptLine, validateWebhookUrl, checkAndRecordFingerprint, randomToken, loadStagingSecrets, deleteStagingSecrets } from './secrets.mjs';
+import { cloudContext, writeReport, hubHostsOf } from './commands.mjs';
 
 export const BLOCKERS = {
   'B-1': {
@@ -124,24 +125,29 @@ export async function stagingTeardown(ctx, f) {
   return { result: 'PASS', detail: `STAGING Workers deleted${f.queues ? ' and queues' : ' (queues kept; --queues to delete them)'}`, report: file };
 }
 
-function latestStagingPass(sourcesHash) {
+/** The newest Cloudflare STAGING run that passed EVERY mandatory gate for exactly this binding. */
+function latestStagingPass(binding) {
   const dir = path.join(STATE_DIR, 'evidence');
   if (!fs.existsSync(dir)) return null;
   const files = fs.readdirSync(dir).filter(n => /^staging-gates-cloud-.*-PASS\.json$/.test(n)).sort().reverse();
   for (const n of files) {
     const e = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
-    if (e.result === 'PASS' && e.edge_sources_sha256 === sourcesHash) return { file: n, e };
+    const mandatory = e.mandatory_gates || [];
+    const passed = new Set((e.gates || []).filter(g => g.status === 'PASS').map(g => g.id));
+    if (e.result === 'PASS' && e.target === 'cloud' && e.binding_sha256 === binding &&
+        mandatory.length > 0 && mandatory.every(id => passed.has(id)) && passed.has('K')) return { file: n, e };
   }
   return null;
 }
+const currentBinding = () => stagingBindingHash(EDGE_DIR, pinnedVersion());
 
 export async function prodDeploy(ctx, f) {
   const cfg = await loadConfig(ctx.configFile);
   if (!cfg.envs.prod) throw new KawaError('CONFIG_NO_ENV', 'config has no "prod" section');
-  const src = edgeSourcesHash(EDGE_DIR);
+  const src = currentBinding();
   const pass = latestStagingPass(src);
-  if (!pass) return { result: 'BLOCKED', detail: `no Cloudflare STAGING PASS for this Edge code (${src.slice(0, 12)}…). Run ./kawa-edge install first.` };
-  out.ok(`STAGING PASS evidence for this exact Edge code: ${pass.file}`);
+  if (!pass) return { result: 'BLOCKED', detail: `no complete Cloudflare STAGING PASS for this Edge code + renderer + wrangler (${src.slice(0, 12)}…). Run ./kawa-edge install first.` };
+  out.ok(`STAGING PASS evidence (all mandatory gates) for this exact build: ${pass.file}`);
   const local = await localChecks({ cfg, env: 'prod', wrangler: createWrangler({ quiet: true }), inContainer: !!process.env.KAWA_IN_CONTAINER });
   const cloud = await cloudContext(cfg);
   const pre = await cloudChecks({ env: 'prod', plan: local.plan, api: cloud.api, stateDeployed: loadDeployed('prod') });
@@ -149,14 +155,18 @@ export async function prodDeploy(ctx, f) {
   const secrets = {};
   const commits = [];
   const ingressA = pre.actions.find(a => a.kind === 'worker' && a.worker.role === 'ingress');
-  if (ingressA.action === 'CREATE' || (ingressA.missingSecrets || []).length || f['set-halt-notify']) {
+  const missing = new Set(ingressA.missingSecrets || []);
+  const isNew = ingressA.action === 'CREATE';
+  // Upload ONLY what is missing or explicitly requested. The PROD path token is generated once here,
+  // never shown, and rotated only by `cutover`: rotating it anywhere else would silently cut
+  // TradingView off after cutover.
+  const ingressSecrets = {};
+  if (isNew || missing.has('HALT_NOTIFY_URL') || f['set-halt-notify']) {
     const halt = await promptHidden('PROD halt-notification URL (https, a collector independent of every Hub; input hidden): ');
-    let u; try { u = new URL(halt); } catch { throw new KawaError('HALT_URL_INVALID', 'not a valid URL'); }
-    if (u.protocol !== 'https:') throw new KawaError('HALT_URL_INVALID', 'must be https');
-    if (u.hostname === HARD_LOCKS.HUB_A_PUBLIC_HOST) throw new KawaError('HALT_URL_IS_HUB', 'the halt notification must not depend on a Hub');
-    // The PROD path token is generated here and never shown: `cutover` rotates it and shows it once.
-    secrets.ingress = { WEBHOOK_PATH_TOKEN: randomToken(), HALT_NOTIFY_URL: halt };
+    ingressSecrets.HALT_NOTIFY_URL = validateHaltUrl(halt, hubHostsOf(cfg));
   }
+  if (isNew || missing.has('WEBHOOK_PATH_TOKEN')) ingressSecrets.WEBHOOK_PATH_TOKEN = randomToken();
+  if (Object.keys(ingressSecrets).length) secrets.ingress = ingressSecrets;
   for (const a of pre.actions.filter(a => a.kind === 'worker' && a.worker.role === 'consumer')) {
     const id = a.worker.dest;
     if (a.action === 'CREATE' || (a.missingSecrets || []).length || f['set-webhook'] === id) {
@@ -172,7 +182,7 @@ export async function prodDeploy(ctx, f) {
   const done = await execute({ env: 'prod', actions: pre.actions, api: cloud.api, wrangler: cloud.wrangler,
                                secretsFor: (w) => (w.role === 'ingress' ? secrets.ingress : secrets[w.dest]) || null });
   for (const c of commits) c();
-  const file = writeReport('prod-deploy', { applied: done, staging_pass: pass.file, edge_sources_sha256: src });
+  const file = writeReport('prod-deploy', { applied: done, staging_pass: pass.file, binding_sha256: src });
   out.ok('PROD Edge deployed INERT: no alert reaches it until TradingView is pointed at it (cutover).');
   out.info('TradingView still posts DIRECTLY to HUB_A. Tunnel, hostname and HUB_A untouched.');
   out.warn('Next: hub-check (BLOCKED by B-2) and cutover-check (BLOCKED by B-1, B-2).');
@@ -195,9 +205,8 @@ export async function cutoverCheck(ctx, f) {
   const checks = [];
   const add = (id, title, status, detail) => { checks.push({ id, title, status, detail }); (status === 'PASS' ? out.ok : status === 'MANUAL' ? out.warn : out.fail)(`${id.padEnd(4)} ${status.padEnd(8)} ${title}${detail ? ' — ' + detail : ''}`); };
   out.step('Cutover preconditions (nothing is changed)');
-  const src = edgeSourcesHash(EDGE_DIR);
-  const pass = latestStagingPass(src);
-  add('C1', 'STAGING PASS on Cloudflare for this exact Edge code', pass ? 'PASS' : 'FAIL', pass ? pass.file : 'run ./kawa-edge install');
+  const pass = latestStagingPass(currentBinding());
+  add('C1', 'STAGING PASS on Cloudflare (all mandatory gates) for this exact build', pass ? 'PASS' : 'FAIL', pass ? pass.file : 'run ./kawa-edge install');
   if (f.offline || !cfg.envs.prod) add('C2', 'PROD Edge deployed, managed, current, secrets set', 'UNKNOWN', f.offline ? '--offline' : 'no prod section');
   else {
     const cloud = await cloudContext(cfg);

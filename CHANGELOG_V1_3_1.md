@@ -1,0 +1,77 @@
+# CHANGELOG · V1.3.1 R1 respecto de V1.3.0 R4
+
+Base: `KAWA_EDGE_SIGNAL_BUFFER_V1_3_0_R4_CANDIDATE_2026-09-22.zip`
+(SHA-256 `1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867`), importado sin cambios como
+primer commit del repositorio (`7d8dab5`). Esta lista sale de `git diff --name-status 7d8dab5` y es
+exhaustiva. En el ZIP, R4 vive bajo `edge/`.
+
+## Código de producción del Edge: **SIN CAMBIOS**
+
+`edge/src/ingress-entry.js`, `producer.js`, `sequencer.js`, `destinations.js`, `consumer-entry.js`,
+`consumer.js`, `edge/staging-receiver/src/index.js`, `edge/admin-worker/src/index.js`: **byte-idénticos a
+R4** (`git diff 7d8dab5 -- edge/src edge/staging-receiver edge/admin-worker` vacío). No se encontró ningún
+bug de producción: el fallo del NAS era del harness.
+
+## Tests del Edge
+
+| Fichero | Cambio | Motivo |
+|---|---|---|
+| `edge/vitest.config.js` | **M** · añade `outboundService` (salida de red local) | causa raíz del 53/90 (`ROOT_CAUSE_NAS_53_90.md`); sin tocar timeouts ni bindings |
+| `edge/test/hermetic_egress.test.js` | **A** · 2 tests | guardián: falla si se pierde la hermeticidad |
+| `edge/test/scenario_consumer_own_entry.test.js` | **A** · 3 tests | respalda el delta 2 de configuración (abajo) |
+| los 9 ficheros de test de R4 y sus helpers | **sin cambios** | — |
+
+## Configuración de wrangler (ya no se edita a mano)
+
+| Fichero R4 | Ahora | Motivo |
+|---|---|---|
+| `edge/wrangler.staging.toml` | **R** → `deployer/test/fixtures/` | se **genera** desde `config/kawa-edge.json`; el original queda como referencia del test de equivalencia |
+| `edge/wrangler.consumer.hub-a.staging.toml` | **R** → `deployer/test/fixtures/` | idem |
+| `edge/wrangler.consumer.hub-b.staging.toml` | **R** → `deployer/test/fixtures/` | idem |
+| `edge/wrangler.consumer.staging.toml` | **D** | forma V1.2.3 de un solo destino con colas `kawa-signal-buffer-stg` que no existen: desplegarlo contradiría V1.3.0 (queda en el ZIP R4) |
+
+Deltas de los configs **generados** frente a R4 (comprobados por `deployer/test/r4-equivalence.test.mjs`
+con el lector de configuración del wrangler fijado; todo lo demás es idéntico):
+
+1. **Un receptor STAGING por Hub** (`kawa-staging-receiver-hub-a`, `…-hub-b`) en lugar de uno compartido.
+   Mismo código de receptor. Motivo: los gates obligatorios «HUB_A caído / HUB_B sigue» y de
+   deduplicación por Hub necesitan ledgers y comportamiento independientes; con un receptor compartido el
+   segundo Hub recibía `DUPLICATE` del primero y el ledger mezclaba destinos.
+2. **Cada consumer lleva solo su propia entrada** en `DESTINATIONS`. El consumer está fijado por
+   `CONSUMER_DESTINATION_ID` y nunca lee otra entrada; el Sequencer (autoridad) conserva la lista completa.
+   Motivo: añadir HUB_C **no** redespliega el consumer de HUB_A. Probado en workerd (3 tests).
+3. **Consumers sin URL pública** (`workers_dev = false`, `preview_urls = false`): un consumer de cola no
+   necesita HTTP. Ingress/admin/receptores: `preview_urls = false`.
+4. **Marcadores de propiedad** `KAWA_EDGE_MANAGED` y `KAWA_EDGE_BUILD` (vars en claro, inertes para el
+   código): permiten al preflight distinguir un recurso propio de uno ajeno y no redesplegar lo que ya
+   está al día.
+5. **PROD** (nuevo; R4 solo traía STAGING): nombres `-prod`, sin Service Binding, sin receptor, sin admin;
+   `DEST_<ID>_WEBHOOK_URL` como secreto obligatorio solo en el consumer de ese Hub.
+
+## Documentación
+
+| Fichero | Cambio |
+|---|---|
+| `edge/STAGING_RUNBOOK.md` | **D** · runbook V1.2.x con órdenes legacy; sustituido por `RUNBOOK_VIGENTE.md` (único vigente) |
+| `edge/README.md` | **M** · apuntaba a `STAGING_RUNBOOK.md`; ahora apunta al runbook vigente |
+| `edge/MIGRATION_AND_DEPLOYMENT_V1_3_0.md` | **M** · solo una nota de 5 líneas al principio (autoridad de arquitectura; comandos ejecutados por el instalador; B-1). Resto intacto |
+| `edge/VERSION` | **M** · identidad V1.3.1 R1 antepuesta; registro de R4 intacto debajo |
+| `edge/package.json`, `edge/package-lock.json` | **M** · solo la versión raíz `1.3.0 → 1.3.1`. **Árbol de dependencias idéntico** |
+| `edge/ARCHITECTURE_V1_3_0.md`, `TEST_REPORT_V1_3_0.md`, `REQUIREMENTS_MATRIX_V1_3_0.json`, `destinations.example.json`, `.dev.vars.example`, `test/kawa/*` | sin cambios |
+
+## Nuevo (paquete instalable)
+
+| Ruta | Qué es |
+|---|---|
+| `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `kawa-edge` | imagen fijada por digest, capas de dependencias/código separadas; contenedor sin puertos, read-only, `cap_drop ALL`; lanzador del host |
+| `config/kawa-edge.example.json`, `secrets/README.md` | configuración única, sin secretos; buzón de un solo uso para el token |
+| `deployer/cli.mjs`, `deployer/lib/**` | instalador y operación (ver `RUNBOOK_VIGENTE.md`) |
+| `deployer/test/**` | 32 tests (unit, equivalencia R4, E2E contra API simulado) |
+| `README_NAS_INSTALL.md`, `RUNBOOK_VIGENTE.md`, `CLOUDFLARE_API_TOKEN.md`, `ROOT_CAUSE_NAS_53_90.md`, `TEST_REPORT_V1_3_1.md`, `RELEASE_REPORT_V1_3_1.md`, `CHANGELOG_V1_3_1.md`, `VERSION` | documentación de la entrega |
+| `MANIFEST_SHA256_V1_3_1.json`, `TEST_EVIDENCE_V1_3_1.json` | generados por `package` |
+
+## Toolchain
+
+Sin cambios: wrangler 4.132.0, vitest 2.1.9, @cloudflare/vitest-pool-workers 0.5.40, Node 22. Sin
+`npm audit fix`. Las 10 vulnerabilidades del árbol dev siguen presentes y analizadas en
+`ROOT_CAUSE_NAS_53_90.md §5`; `npm audit --omit=dev` = 0.

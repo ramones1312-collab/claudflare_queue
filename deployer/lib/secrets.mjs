@@ -105,7 +105,7 @@ export function saveStagingSecrets(s) {
 export function deleteStagingSecrets() { shred(stagingFile()); }
 
 /** Ensures every STAGING token exists; returns { secrets, created: [...] }. */
-export function ensureStagingSecrets(destIds, haltNotifyUrl) {
+export function ensureStagingSecrets(destIds, haltNotifyUrl, hubHosts = []) {
   const s = loadStagingSecrets() || {};
   const created = [];
   if (!s.WEBHOOK_PATH_TOKEN) { s.WEBHOOK_PATH_TOKEN = randomToken(); created.push('WEBHOOK_PATH_TOKEN'); }
@@ -113,6 +113,8 @@ export function ensureStagingSecrets(destIds, haltNotifyUrl) {
   s.CONTROL_TOKEN = s.CONTROL_TOKEN || {};
   for (const id of destIds) if (!s.CONTROL_TOKEN[id]) { s.CONTROL_TOKEN[id] = randomToken(); created.push(`CONTROL_TOKEN:${id}`); }
   if (haltNotifyUrl) s.HALT_NOTIFY_URL = registerSecret(haltNotifyUrl);
+  // Re-validated on every load, so a value edited by hand in the store cannot bypass the locks.
+  if (s.HALT_NOTIFY_URL) validateHaltUrl(s.HALT_NOTIFY_URL, hubHosts);
   // STAGING without a collector: a .invalid host fails fast on Cloudflare and the halt is still
   // durable (R4: the safety property never depends on the notification channel).
   if (!s.HALT_NOTIFY_URL) s.HALT_NOTIFY_URL = 'https://halt-notify.invalid/kawa-edge-stg';
@@ -143,12 +145,36 @@ export function validateWebhookUrl(raw, expectedHost) {
   return registerSecret(u.toString());
 }
 
+/**
+ * Halt-notification collector URL (STAGING and PROD). The Sequencer POSTs to it with the global
+ * fetch — it is the one egress that does NOT go through a Service Binding — so it must never be able
+ * to reach a Hub: https only, no port (8180/8080 refused in any form), never a Hub host, never a
+ * /webhook/ path. `hubHosts` = every webhook_host in the config plus HUB_A's hard-locked host.
+ */
+export function validateHaltUrl(raw, hubHosts = []) {
+  let u;
+  try { u = new URL(raw); } catch { throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL is not a valid URL'); }
+  for (const p of HARD_LOCKS.FORBIDDEN_PORTS) {
+    if (u.port === p || String(raw).includes(`:${p}`)) throw new KawaError('HARD_LOCK_CONTROL_PORT', `the halt-notification URL names port ${p} (Hub control plane)`);
+  }
+  if (u.protocol !== 'https:') throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL must use https');
+  if (u.port) throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL must not name a port');
+  const host = u.hostname.replace(/\.$/, '').toLowerCase();
+  const hubs = new Set([HARD_LOCKS.HUB_A_PUBLIC_HOST, ...hubHosts].map(h => String(h).replace(/\.$/, '').toLowerCase()));
+  if (hubs.has(host)) throw new KawaError('HALT_URL_IS_HUB', 'the halt notification must go to a collector independent of every Hub, not to a Hub host');
+  if (/\/webhook\//i.test(u.pathname)) throw new KawaError('HALT_URL_IS_HUB', 'the halt-notification URL must not be a Hub webhook path');
+  return registerSecret(u.toString());
+}
+
 const fpFile = () => path.join(STATE_DIR, 'prod', 'webhook-fingerprints.json');
 
+let fpCache = null;
+const fpPending = new Map();                          // destination -> fingerprint entered in THIS run
 function fpStore() {
+  if (fpCache) return fpCache;
   const f = fpFile();
-  if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf8'));
-  return { key: crypto.randomBytes(32).toString('hex'), destinations: {} };
+  fpCache = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : { key: crypto.randomBytes(32).toString('hex'), destinations: {} };
+  return fpCache;
 }
 
 export function fingerprint(store, url) {
@@ -157,17 +183,24 @@ export function fingerprint(store, url) {
   return crypto.createHmac('sha256', Buffer.from(store.key, 'hex')).update(token).digest('hex');
 }
 
-/** Refuses a credential already used by another destination. Records it for this one. */
+/**
+ * Refuses a credential already used by another destination — recorded earlier OR entered earlier in
+ * this same run. Returns a commit function; every commit writes the whole store (all pending
+ * fingerprints of the run), so no entry can be overwritten by a stale copy.
+ */
 export function checkAndRecordFingerprint(destId, url) {
   const store = fpStore();
   const fp = fingerprint(store, url);
-  for (const [other, v] of Object.entries(store.destinations)) {
+  const known = new Map([...Object.entries(store.destinations), ...fpPending]);
+  for (const [other, v] of known) {
     if (other !== destId && v === fp) {
       throw new KawaError('WEBHOOK_SECRET_REUSED', `this webhook secret is already used by ${other}; every Hub needs its own credential`);
     }
   }
+  fpPending.set(destId, fp);
   return () => {
-    store.destinations[destId] = fp;
+    for (const [k, v] of fpPending) store.destinations[k] = v;
+    fpPending.clear();
     fs.mkdirSync(path.dirname(fpFile()), { recursive: true, mode: 0o700 });
     fs.writeFileSync(fpFile(), JSON.stringify(store, null, 2), { mode: 0o600 });
   };

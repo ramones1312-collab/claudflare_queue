@@ -26,9 +26,15 @@ if (!def || cmd === 'help' || args.includes('--help')) {
 }
 
 const t0 = Date.now();
-fs.mkdirSync(STATE_DIR, { recursive: true });
-const logFile = openLog(STATE_DIR, cmd);
+let logFile = '(none)';
 try {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    logFile = openLog(STATE_DIR, cmd);
+  } catch (err) {
+    throw new KawaError('STATE_NOT_WRITABLE', `cannot write ${STATE_DIR} (${err.code || err.message})`,
+      'Run through ./kawa-edge: it makes state/ belong to the folder owner the container runs as.');
+  }
   const res = await def.run({ args, configFile: CONFIG_FILE, root: ROOT, stateDir: STATE_DIR });
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   out.banner(res.result, `${cmd} · ${secs} s${res.detail ? ' · ' + res.detail : ''}`);

@@ -12,8 +12,32 @@ test('PROD needs a Cloudflare STAGING PASS for the same Edge code', async () => 
     w.sb.dropToken();
     const r = await runCli(w.sb, w.api, ['prod-deploy']);
     assert.equal(r.code, 2, r.text);
-    assert.match(r.text, /no Cloudflare STAGING PASS/);
+    assert.match(r.text, /no complete Cloudflare STAGING PASS/);
     assert.equal(writes(w.mock).length, 0);
+  } finally { await w.close(); }
+});
+
+test('a --quick (PARTIAL) STAGING run never authorises PROD', async () => {
+  const w = await world();
+  try {
+    await fakeStagingPass(w.sb, { skip: 'K' });
+    w.sb.dropToken();
+    const r = await runCli(w.sb, w.api, ['prod-deploy']);
+    assert.equal(r.code, 2, r.text);
+    assert.match(r.text, /no complete Cloudflare STAGING PASS/);
+    assert.equal(writes(w.mock).length, 0);
+  } finally { await w.close(); }
+});
+
+test('prod-deploy: a halt URL pointing at HUB_A is refused; nothing deployed', async () => {
+  const w = await world();
+  try {
+    await fakeStagingPass(w.sb);
+    w.sb.dropToken();
+    const r = await runCli(w.sb, w.api, ['prod-deploy'], { answers: ['https://vector-hook.integrademia.com/status'] });
+    assert.equal(r.code, 1, r.text);
+    assert.match(r.text, /HALT_URL_IS_HUB/);
+    assert.equal(w.mock.state.journal.some(j => j.method === 'PUT'), false);
   } finally { await w.close(); }
 });
 
@@ -55,6 +79,15 @@ test('prod-deploy: PROD deployed inert with its own names and secrets; STAGING u
     const again = await runCli(w.sb, w.api, ['prod-deploy']);
     assert.equal(again.code, 0, again.text);
     assert.equal(writes(w.mock).length, n, 'second prod-deploy must not write');
+
+    // Changing the halt URL later must NOT rotate the PROD path token (it would cut TradingView off).
+    const tok0 = w.mock.state.secretValues.get('kawa-edge-ingress-prod/WEBHOOK_PATH_TOKEN');
+    w.sb.dropToken();
+    const hn = await runCli(w.sb, w.api, ['prod-deploy', '--set-halt-notify'], { answers: ['https://other-collector.example.org/kawa'] });
+    assert.equal(hn.code, 0, hn.text);
+    assert.equal(w.mock.state.secretValues.get('kawa-edge-ingress-prod/HALT_NOTIFY_URL'), 'https://other-collector.example.org/kawa');
+    assert.equal(w.mock.state.secretValues.get('kawa-edge-ingress-prod/WEBHOOK_PATH_TOKEN'), tok0, 'path token rotated');
+    assert.equal(JSON.stringify(JSON.parse(fs.readFileSync(path.join(w.sb.stateDir, 'prod', 'deployed.json'), 'utf8'))).includes('"secrets_fp":"'), false, 'PROD secret digest persisted');
 
     // HUB_B may never reuse HUB_A's credential, even on another host; HUB_A's consumer is not touched.
     w.sb.dropToken();

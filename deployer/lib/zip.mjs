@@ -44,6 +44,8 @@ export function readZip(file) {
   const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (eocd < 0) throw new Error('not a zip file');
   const count = buf.readUInt16LE(eocd + 10);
+  const LIMIT = 256 * 1024 * 1024;                    // the package is < 1 MiB; refuse zip bombs
+  let total = 0;
   let p = buf.readUInt32LE(eocd + 16);
   const out = [];
   for (let i = 0; i < count; i++) {
@@ -54,7 +56,10 @@ export function readZip(file) {
     const name = buf.toString('utf8', p + 46, p + 46 + nlen);
     const lnlen = buf.readUInt16LE(lo + 26), lxlen = buf.readUInt16LE(lo + 28);
     const raw = buf.subarray(lo + 30 + lnlen + lxlen, lo + 30 + lnlen + lxlen + csize);
-    const data = method === 8 ? zlib.inflateRawSync(raw) : Buffer.from(raw);
+    const usize = buf.readUInt32LE(p + 24);
+    total += usize;
+    if (total > LIMIT) throw new Error('zip expands beyond the size limit');
+    const data = method === 8 ? zlib.inflateRawSync(raw, { maxOutputLength: usize }) : Buffer.from(raw);
     if ((zlib.crc32(data) >>> 0) !== crc) throw new Error(`CRC mismatch in ${name}`);
     out.push({ name, data, mode: (attr >>> 16) & 0o777 });
     p += 46 + nlen + xlen + clen;

@@ -7,9 +7,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WRANGLER_BIN, EDGE_DIR, RUNTIME_DIR, BUILD_DIR } from './paths.mjs';
 import { out, redact, KawaError } from './log.mjs';
+import { apiBase } from './cfapi.mjs';
 
 const PASSTHROUGH = ['PATH', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'NODE_EXTRA_CA_CERTS',
-                     'SSL_CERT_FILE', 'CLOUDFLARE_API_BASE_URL', 'TZ'];
+                     'SSL_CERT_FILE', 'TZ'];
 
 export function pinnedVersion() {
   const lock = JSON.parse(fs.readFileSync(path.join(EDGE_DIR, 'package-lock.json'), 'utf8'));
@@ -29,7 +30,7 @@ export function createWrangler({ token, accountId, quiet = false } = {}) {
       WRANGLER_SEND_METRICS: 'false',
       NO_COLOR: '1', FORCE_COLOR: '0', CI: 'true',
     });
-    if (token) e.CLOUDFLARE_API_TOKEN = token;
+    if (token) { e.CLOUDFLARE_API_TOKEN = token; if (process.env.CLOUDFLARE_API_BASE_URL) e.CLOUDFLARE_API_BASE_URL = apiBase(); }
     if (accountId) e.CLOUDFLARE_ACCOUNT_ID = accountId;
     return e;
   }
@@ -43,13 +44,19 @@ export function createWrangler({ token, accountId, quiet = false } = {}) {
       fs.mkdirSync(BUILD_DIR, { recursive: true });
       const child = spawn(WRANGLER_BIN, args, { cwd: BUILD_DIR, env: env(), stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '', stderr = '';
+      const partial = { out: '', err: '' };
+      // Redact whole LINES: a secret split across two chunks must never be printed as two fragments.
+      const emit = (line) => { if (!quiet && line.trim()) out.info('   │ ' + redact(line)); };
       const pipe = (buf, which) => {
         const text = buf.toString();
         if (which === 'out') stdout += text; else stderr += text;
-        if (!quiet) for (const line of text.split('\n')) if (line.trim()) out.info('   │ ' + redact(line));
+        const lines = (partial[which] + text).split('\n');
+        partial[which] = lines.pop();
+        for (const line of lines) emit(line);
       };
       child.stdout.on('data', b => pipe(b, 'out'));
       child.stderr.on('data', b => pipe(b, 'err'));
+      child.on('exit', () => { emit(partial.out); emit(partial.err); partial.out = partial.err = ''; });
       if (input) child.stdin.write(input);
       child.stdin.end();
       child.on('error', reject);

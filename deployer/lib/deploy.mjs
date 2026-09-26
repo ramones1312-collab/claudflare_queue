@@ -67,7 +67,10 @@ export async function execute({ env, actions, api, wrangler, secretsFor, force =
     const names = (await api.secretNames(w.name)) || [];
     const missing = requiredSecrets(env, w).filter(s => !names.includes(s));
     if (missing.length) throw new KawaError('SECRET_MISSING_AFTER_DEPLOY', `${w.name}: required secret(s) not present: ${missing.join(', ')}`);
-    deployed[w.name] = { build: w.build, secrets_fp: secretsFingerprint(secrets) || (deployed[w.name] && deployed[w.name].secrets_fp) || null, at: new Date().toISOString() };
+    // Secret fingerprints are kept for STAGING only (values the deployer owns). A PROD Hub URL never
+    // leaves a digest on disk that could be brute-forced offline.
+    const fp = env === 'staging' ? (secretsFingerprint(secrets) || (deployed[w.name] && deployed[w.name].secrets_fp) || null) : null;
+    deployed[w.name] = { build: w.build, secrets_fp: fp, at: new Date().toISOString() };
     saveDeployed(env, deployed);
     out.ok(`${w.name} deployed · build ${w.build.slice(0, 12)} · secrets present: ${requiredSecrets(env, w).join(', ') || 'none required'}`);
     done.push({ kind: 'worker', name: w.name, result: a.action === 'CREATE' ? 'CREATED' : 'UPDATED', build: w.build });

@@ -3,7 +3,8 @@
 #   sudo ./kawa-edge install          (recommended: the launcher sets the user and builds once)
 #   sudo docker compose run --rm installer install     (equivalent, by hand)
 #
-# Isolation from HUB_A, by construction: no ports, default bridge network (Internet egress only),
+# Isolation from HUB_A, by construction: no ports, its OWN project network (Internet egress only; not
+# Docker's shared default bridge, so no other container is reachable),
 # not privileged, all capabilities dropped, read-only root filesystem, no volume shared with any
 # other container. Only three folders of THIS package are mounted.
 name: kawa-edge-deployer
@@ -18,7 +19,7 @@ services:
     # by you on the NAS. Default 1000 when started some other way.
     user: "${KAWA_UID:-1000}:${KAWA_GID:-1000}"
     command: ["${KAWA_COMMAND:-help}"]
-    network_mode: bridge
+    networks: [deployer]
     privileged: false
     read_only: true
     cap_drop: [ALL]
@@ -41,3 +42,6 @@ services:
       - ./config:/opt/kawa/config
       - ./state:/opt/kawa/state
       - ./secrets:/opt/kawa/secrets
+
+networks:
+  deployer: {}
