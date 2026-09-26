@@ -1,11 +1,11 @@
-# RELEASE REPORT · KAWA Edge Signal Buffer V1.3.1 R3 (NAS turnkey)
+# RELEASE REPORT · KAWA Edge Signal Buffer V1.3.1 R3.1 (NAS turnkey)
 
 | Campo | Valor |
 |---|---|
-| Identidad | `edge-signal-buffer-v1.3.1-nas` · revisión **R3** (remediación de la auditoría externa de R1, veredicto FAIL, y de la re-auditoría independiente de R2) · 2026-09-26 |
+| Identidad | `edge-signal-buffer-v1.3.1-nas` · revisión **R3.1** (correcciones quirúrgicas R3-01, R3-02, R3-03 y R3-07 sobre R3, auditada PASS WITH OBSERVATIONS) · 2026-09-26 |
 | Linaje | V1.3.1 ← V1.3.0 R4 CANDIDATE (`1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867`) |
 | Código de producción del Edge | **byte-idéntico a R4** (`git diff 7d8dab5 -- edge/src edge/staging-receiver edge/admin-worker` vacío) |
-| ZIP | `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3_2026-09-26.zip` — SHA-256 en la **primera línea** del `.sha256` adjunto (un fichero no puede contener su propio hash) |
+| ZIP | `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.1_2026-09-26.zip` — SHA-256 en la **primera línea** del `.sha256` adjunto (un fichero no puede contener su propio hash) |
 | Manifest | `MANIFEST_SHA256_V1_3_1.json` (autohash excluido, como R4); su SHA-256 va en la **segunda línea** del `.sha256` (F-20); `verify-release` la exige y la comprueba |
 | Evidencia de tests | `TEST_EVIDENCE_V1_3_1.json`, ligada al hash del árbol de entrada de los tests y **firmada** (HMAC) por la instalación que la produjo |
 | Estado | **STAGING-READY.** **CUTOVER PROD BLOQUEADO** por B-1 y B-2 (§6) |
@@ -34,24 +34,24 @@ timeouts. Detalle: `ROOT_CAUSE_NAS_53_90.md`.
 | Suite | Resultado |
 |---|---|
 | Edge (workerd) | **95/95 PASS**, 11/11 ficheros, **exit 0** — 90 de R4 sin modificar + 2 guardián + 3 consumer con su entrada |
-| Deployer | **81/81 PASS**, exit 0 — 56 unit (incl. veredictos con vitest real, integridad del ZIP, lanzador, runner de gates), 6 equivalencia R4 (config completo), 19 E2E del instalador contra API simulado |
+| Deployer | **84/84 PASS**, exit 0, **anclado por fichero** (`deployer/test/expected-tests.json`) — 58 unit (incl. veredictos con vitest real, integridad del ZIP, lanzador, runner de gates), 6 equivalencia R4 (config completo), 20 E2E del instalador contra API simulado |
 | Ensayo local de gates STAGING | **PASS** — 13 ejecutados, 5 `CLOUD_ONLY` (justificado en TEST_REPORT §5) |
 | Gate físico sobre el ZIP final | ver §4 |
 
 ## 4. Tiempos medidos (entorno NAS-equivalente: contenedor de la imagen, 4 vCPU, rootfs read-only, uid no-root)
 
-| Paso | Antes (R4, entorno del NAS) | V1.3.1 R3 (medido en esta revisión) |
+| Paso | Antes (R4, entorno del NAS) | V1.3.1 R3.1 (medido en esta revisión; lo no re-medido se indica) |
 |---|---|---|
 | Instalación limpia de dependencias (imagen sin caché: `npm ci` + export) | `npm ci` en bind mount del NAS (no medido por fase) | **28.4 s** medido en R1 (de ellos `npm ci` 8.6 s); capa de dependencias sin cambios desde R1 |
 | Reconstrucción tras un cambio solo de código | reinstalar | segundos (capa de dependencias en caché) |
-| Fast preflight (`verify-fast`: manifest, toolchain, config, aislamiento, 8 bundles offline, 62 unit) | — | **13.7 s** |
+| Fast preflight (`verify-fast`: manifest, toolchain, config, aislamiento, 8 bundles offline, 64 unit) | — | 13.7 s (medido en R3; +2 tests unitarios rápidos) |
 | Targeted (`test-targeted`, 1 fichero de test del Edge) | suite completa | **2.2 s** |
 | Targeted (cambio solo de documentación) | suite completa | **0.0 s** (nada que ejecutar) |
-| Full release gate (`test-full`: Edge 95 + deployer 81) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | **122.7 s PASS** (Edge 8.1 s en paralelo por fichero; deployer 114.6 s en paralelo por fichero; R1 eran 67.9 s con 46 tests: los 35 nuevos, sobre todo los E2E de la puerta PROD, añaden ~55 s) |
+| Full release gate (`test-full`: Edge 95 + deployer 84) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | **120.3 s PASS** (Edge 9.9 s en paralelo por fichero; deployer 110.4 s en paralelo por fichero) |
 | Empaquetado (`package`, sin re-ejecutar la suite) | 15–20 min (incluía repetir la suite) | < 1 s (evidencia **firmada** de `test-full` reutilizada por hash; la suite **no** se repite) |
 | Verificación del ZIP (`verify-release`) | — | < 1 s (hash esperado obligatorio, entradas crudas del ZIP, manifest y su hash publicado, vínculo de evidencia, ficheros prohibidos, runbook único) |
 | Install STAGING hasta gates (preflight + 6 bundles + 6 despliegues, contra API simulado) | manual, Worker a Worker | **13.6 s**; re-ejecución idempotente **7.0 s** |
-| Gates STAGING | — | ensayo local **203.5 s** (13 gates + 5 CLOUD_ONLY); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
+| Gates STAGING | — | ensayo local **203.5 s** (medido en R3; R3.1 no toca los gates ni el runner) (13 gates + 5 CLOUD_ONLY); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
 | Gate físico sobre el ZIP final (extraer → imagen → verify-fast → test-full → rehearse) | — | se ejecuta **después** de empaquetar, sobre el ZIP ya cerrado; su resultado va en el mensaje de entrega y en `delivery/` (un fichero dentro del ZIP no puede certificar el ZIP que lo contiene). R1: 281 s PASS |
 
 Ningún paso supera los objetivos (empaquetado ≪ 5 min; full test ≪ 10 min). El flujo normal nunca ejecuta dos
@@ -123,6 +123,12 @@ tests del runner escribían evidencia y la clave de firma en el `state/` real; y
 tras el build podía seguir un enlace a directorio; `verify-release` no comprobaba la firma de la evidencia
 empaquetada), 5 P3 y tres afirmaciones exageradas en la respuesta a la auditoría. Todo corregido en R3 con test
 (`AUDIT_RESPONSE_R2.md` §R3).
+
+**R3.1.** La auditoría de R3 dio **PASS WITH OBSERVATIONS** (sin P0/P1; los 6 P0/P1 de R1 cerrados; A3/A4
+cerrado con el ZIP R4 original). R3.1 corrige solo lo que el auditor pide antes de PROD: R3-01 (nombres de entrada
+ZIP no canónicos), R3-02 (suite del deployer anclada por fichero), R3-03 (gobierna el run STAGING más reciente del
+mismo build; caducidad de 7 días) y R3-07 (procedimiento único de cambio de ruta). Los P3 restantes (R3-04…R3-06,
+R3-08…R3-16) quedan **abiertos a propósito** en esta ronda. Evidencia antes/después: `delivery/FPC_EVIDENCE/`.
 
 ## 6. Bloqueos (declarados, no resueltos en silencio)
 
