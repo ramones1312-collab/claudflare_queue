@@ -15,7 +15,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: kawa-edge-deployer:1.3.1-nas-r3
+    image: kawa-edge-deployer:1.3.1-nas-r3.1
     # The launcher sets these to the owner of this folder, so state/ stays writable and readable
     # by you on the NAS. Default 1000 when started some other way.
     user: "${KAWA_UID:-1000}:${KAWA_GID:-1000}"

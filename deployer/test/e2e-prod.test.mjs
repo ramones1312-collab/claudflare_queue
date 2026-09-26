@@ -66,6 +66,13 @@ test('prod-deploy: inert PROD with own names/secrets; idempotent; halt change ne
     const c = await runCli(w.sb, w.api, ['cutover-check']);
     assert.equal(c.code, 2, c.text);
     assert.match(c.text, /C3\s+BLOCKED/); assert.match(c.text, /C4\s+BLOCKED/);
+    // R3-07 · one route-switch procedure: cutover-check (C9) and rollback-transport print the same steps.
+    const { ROUTE_SWITCH_PROCEDURE } = await import('../lib/prod.mjs');
+    assert.match(c.text, /C9\s+MANUAL/);
+    const rb = await runCli(w.sb, w.api, ['rollback-transport']);
+    assert.equal(rb.code, 0, rb.text);
+    for (const l of ROUTE_SWITCH_PROCEDURE) { assert.ok(c.text.includes(l), `cutover-check lacks: ${l}`); assert.ok(rb.text.includes(l), `rollback-transport lacks: ${l}`); }
+    assert.doesNotMatch(rb.text, /Leave the PROD Edge running/, 'the contradictory R3 rollback step is gone');
     w.sb.dropToken();
     const cut = await runCli(w.sb, w.api, ['cutover']);
     assert.equal(cut.code, 2);

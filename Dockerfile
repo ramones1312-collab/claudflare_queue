@@ -11,7 +11,7 @@ FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddf
 
 ENV KAWA_ROOT=/opt/kawa \
     KAWA_IN_CONTAINER=1 \
-    KAWA_IMAGE=kawa-edge-deployer:1.3.1-nas-r3 \
+    KAWA_IMAGE=kawa-edge-deployer:1.3.1-nas-r3.1 \
     WRANGLER_SEND_METRICS=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false

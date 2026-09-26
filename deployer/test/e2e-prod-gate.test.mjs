@@ -44,6 +44,35 @@ test('PROD needs a STAGING PASS: none, or any tampered/insufficient one, is BLOC
   } finally { await w.close(); }
 });
 
+test('R3-03 · the most recent Cloudflare run of the same build governs; an old PASS expires', async () => {
+  const w = await world();
+  try {
+    await stagingPassed(w);                                                  // a valid PASS …
+    await fakeStagingPass(w.sb, w.mock, { result: 'FAIL' });                 // … then a NEWER run of the same build FAILED
+    w.sb.dropToken();
+    let r = await runCli(w.sb, w.api, ['prod-deploy']);
+    assert.equal(r.code, 2, r.text);
+    assert.match(r.text, /most recent Cloudflare STAGING run of this build is FAIL/);
+    await fakeStagingPass(w.sb, w.mock, { result: 'PARTIAL' });
+    w.sb.dropToken();
+    r = await runCli(w.sb, w.api, ['prod-deploy']);
+    assert.equal(r.code, 2, r.text);
+    assert.equal(prodWrites(w.mock).length, 0);
+    // A newer run of ANOTHER build does not mask this build's history; only this build's runs count.
+    await fakeStagingPass(w.sb, w.mock, { binding: 'f'.repeat(64) });
+    w.sb.dropToken();
+    assert.equal((await runCli(w.sb, w.api, ['prod-deploy'])).code, 2);
+    // An old PASS (8 days) as the most recent run: expired.
+    for (const f of fs.readdirSync(path.join(w.sb.stateDir, 'evidence'))) fs.rmSync(path.join(w.sb.stateDir, 'evidence', f));
+    await fakeStagingPass(w.sb, w.mock, { started: new Date(Date.now() - 8 * 86400e3).toISOString() });
+    w.sb.dropToken();
+    r = await runCli(w.sb, w.api, ['prod-deploy']);
+    assert.equal(r.code, 2, r.text);
+    assert.match(r.text, /older than 7 days/);
+    assert.equal(prodWrites(w.mock).length, 0);
+  } finally { await w.close(); }
+});
+
 test('add-hub --env prod is gated exactly like prod-deploy (F-03)', async () => {
   const w = await world();
   try {
@@ -59,12 +88,14 @@ test('add-hub --env prod is gated exactly like prod-deploy (F-03)', async () => 
     assert.equal(z.code, 2, z.text);
     assert.match(z.text, /HUB_Z was never gate-tested in STAGING/);
     assert.equal(prodWrites(w.mock).length, 0);
-    // F-03 · the auditor's case: the Edge/deployer code changed after the STAGING PASS.
+    // F-03 · the auditor's case: the Edge/deployer code changed after the STAGING PASS (the only PASS
+    // on record is of another build).
+    for (const f of fs.readdirSync(path.join(w.sb.stateDir, 'evidence'))) fs.rmSync(path.join(w.sb.stateDir, 'evidence', f));
     await fakeStagingPass(w.sb, w.mock, { binding: 'f'.repeat(64) });
     w.sb.dropToken();
     const c = await runCli(w.sb, w.api, ['add-hub', 'HUB_B', '--env', 'prod', '--webhook-host', 'hub-b.example.com']);
     assert.equal(c.code, 2, c.text);
-    assert.match(c.text, /different deployer\/Edge\/wrangler build/);
+    assert.match(c.text, /no Cloudflare STAGING run of this build/);
     assert.equal(prodWrites(w.mock).length, 0);
   } finally { await w.close(); }
 });

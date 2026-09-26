@@ -8,8 +8,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { edgeVerdict, deployerVerdict } from '../lib/release.mjs';
-import { EDGE_DIR } from '../lib/paths.mjs';
+import { edgeVerdict, deployerVerdict, expectedDeployerTests } from '../lib/release.mjs';
+import { EDGE_DIR, DEPLOYER_DIR } from '../lib/paths.mjs';
 
 function realRun(files) {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-'));
@@ -45,9 +45,46 @@ test('real vitest: the same tree without the broken file passes, and a file that
   assert.equal(edgeVerdict(null, 0, ['x.test.js']).ok, false);
 });
 
-test('deployer verdict: exit code, zero tests, and partial passes are all FAIL', () => {
-  assert.equal(deployerVerdict({ tests: 5, pass: 5, fail: 0, cancelled: 0 }, 0).ok, true);
-  assert.equal(deployerVerdict({ tests: 5, pass: 5, fail: 0, cancelled: 0 }, 1).ok, false);
-  assert.equal(deployerVerdict({ tests: 0, pass: 0, fail: 0, cancelled: 0 }, 0).ok, false);
-  assert.equal(deployerVerdict({ tests: 5, pass: 4, fail: 0, cancelled: 1 }, 0).ok, false);
+/** R3-02 · run REAL node:test with the release gate's structured reporter over a throw-away test dir. */
+function realNodeRun(files) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'kd-'));
+  try {
+    for (const [n, c] of Object.entries(files)) fs.writeFileSync(path.join(d, n), c);
+    const ev = path.join(d, 'events.jsonl');
+    const r = spawnSync(process.execPath, ['--test', `--test-reporter=${path.join(DEPLOYER_DIR, 'lib', 'test-reporter.mjs')}`,
+      `--test-reporter-destination=${ev}`, ...Object.keys(files).map(n => path.join(d, n))],
+      { encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'NODE_TEST_CONTEXT')) });  // a nested run would ignore reporters
+    const events = fs.existsSync(ev) ? fs.readFileSync(ev, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+    return { events, code: r.status };
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+}
+const T = "import { test } from 'node:test';\n";
+const two = T + "test('a', () => {});\ntest('b', () => {});\n";
+
+test('R3-02 · deployer gate anchored per file: the auditor variants D2/D3/D7 are FAIL with real node:test', () => {
+  const ok = realNodeRun({ 'x.test.mjs': two });
+  assert.equal(deployerVerdict(ok.events, ok.code, { 'x.test.mjs': 2 }).ok, true, JSON.stringify(deployerVerdict(ok.events, ok.code, { 'x.test.mjs': 2 })));
+  for (const [name, body] of [
+    ['D2 zero tests', '// no tests at all\n'],
+    ['D3 process.exit(0) mid-file', T + "test('first', () => {});\ntest('second', async () => { process.exit(0); });\ntest('third', () => { throw new Error('never runs'); });\n"],
+    ['D7 conditional test never registered', T + "if (process.env.NEVER_SET) { test('real', () => { throw new Error('x'); }); }\n"],
+    ['skip', T + "test('a', () => {});\ntest('b', { skip: true }, () => {});\n"],
+  ]) {
+    const r = realNodeRun({ 'x.test.mjs': two, 'v.test.mjs': body });
+    const n = { D2: 1, D3: 3, D7: 1, skip: 2 }[name.split(' ')[0]];
+    const v = deployerVerdict(r.events, r.code, { 'x.test.mjs': 2, 'v.test.mjs': n });
+    assert.equal(v.ok, false, `${name}: ${JSON.stringify(v)}`);
+    assert.ok(v.reasons.every(x => x.startsWith('v.test.mjs')), `${name}: failed for the wrong file: ${v.reasons}`);
+    assert.equal(deployerVerdict(r.events, r.code, { 'x.test.mjs': 2, 'v.test.mjs': 0 }).ok, false, `${name}: an anchor of 0 is never a PASS`);
+  }
+  // an expected file that did not run at all, and a file that ran but is not declared
+  assert.equal(deployerVerdict(ok.events, ok.code, { 'x.test.mjs': 2, 'gone.test.mjs': 1 }).ok, false);
+  const extra = realNodeRun({ 'x.test.mjs': two, 'y.test.mjs': two });
+  assert.equal(deployerVerdict(extra.events, extra.code, { 'x.test.mjs': 2 }).ok, false);
+  assert.equal(deployerVerdict(ok.events, 1, { 'x.test.mjs': 2 }).ok, false, 'a non-zero exit is never a PASS');
+});
+
+test('R3-02 · the anchor declares exactly the deployer test files on disk', () => {
+  const { reasons } = expectedDeployerTests([]);
+  assert.deepEqual(reasons, []);
 });

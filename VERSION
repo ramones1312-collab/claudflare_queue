@@ -1,8 +1,8 @@
 KAWA VECTOR · EDGE SIGNAL BUFFER · NAS PACKAGE
 identity: edge-signal-buffer-v1.3.1-nas
-revision: R3 · external-audit remediation of R1 + independent re-audit of R2 (2026-09-26)
+revision: R3.1 · surgical fixes R3-01, R3-02, R3-03, R3-07 of the R3 audit (2026-09-26)
 lineage: V1.3.1 <- V1.3.0 R4 CANDIDATE (zip sha256 1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867)
 edge_runtime_code: byte-identical to V1.3.0 R4
 toolchain: node 22 (image node:22-bookworm-slim@sha256:43ac6c60…772c), wrangler 4.132.0, vitest 2.1.9,
            @cloudflare/vitest-pool-workers 0.5.40 (lockfile unchanged except root version)
-status: STAGING-READY (R3) · PROD CUTOVER BLOCKED (B-1, B-2 — see RELEASE_REPORT_V1_3_1.md)
+status: STAGING-READY (R3.1); PROD candidate pending B-1, B-2 · PROD CUTOVER BLOCKED (B-1, B-2 — see RELEASE_REPORT_V1_3_1.md)

@@ -1,0 +1,26 @@
+# AFTER · code = this revision
+ok 1 - PROD needs a STAGING PASS: none, or any tampered/insufficient one, is BLOCKED with zero PROD writes
+ok 2 - R3-03 · the most recent Cloudflare run of the same build governs; an old PASS expires
+ok 3 - add-hub --env prod is gated exactly like prod-deploy (F-03)
+ok 4 - prod-deploy: inert PROD with own names/secrets; idempotent; halt change needs confirmation and keeps the path token; reuse refused; HUB_A untouched by add-hub; cutover refused
+ok 5 - real vitest: a test file that throws at import makes the gate FAIL (auditor F-01 reproduction)
+ok 6 - real vitest: the same tree without the broken file passes, and a file that did not run is caught
+ok 7 - R3-02 · deployer gate anchored per file: the auditor variants D2/D3/D7 are FAIL with real node:test
+ok 8 - R3-02 · the anchor declares exactly the deployer test files on disk
+ok 9 - F-04 · test evidence with the right hash but not signed here is refused
+ok 10 - F-06 · a clean package verifies
+ok 11 - F-06 · a ZIP carrying a secret token file is refused
+ok 12 - F-06 · a ZIP carrying the operator config is refused
+ok 13 - F-06 · a ZIP carrying state/ is refused
+ok 14 - F-06 · a ZIP carrying an entry outside the package root is refused
+ok 15 - F-06 · a ZIP carrying an undeclared harmless-looking file is refused
+ok 16 - F-06 · without a .sha256 (or --sha256) integrity cannot be checked: refused
+ok 17 - F-12 · nested state/ build/ dist/ dirs are package content (hashed); symlinks are refused
+ok 18 - N-5 · a one-line sidecar (no published manifest hash) is refused
+ok 19 - N-2 · where the evidence key exists, unsigned packaged evidence is refused
+ok 20 - N-5 · duplicate entry names and bytes hidden outside the central directory are refused
+ok 21 - N-6 · a malformed evidence key fails closed
+ok 22 - R3-01 · equivalent spellings of secrets/, config/, state/ paths are refused even when the manifest declares them
+# tests 22
+# pass 22
+# fail 0

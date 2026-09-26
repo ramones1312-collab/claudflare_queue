@@ -1,4 +1,16 @@
-# CHANGELOG · V1.3.1 (R3) respecto de V1.3.0 R4
+# CHANGELOG · V1.3.1 (R3.1) respecto de V1.3.0 R4
+
+## R3.1 (2026-09-26) · correcciones quirúrgicas de la auditoría de R3 (PASS WITH OBSERVATIONS)
+
+Solo los P2 que el auditor pide cerrar antes de PROD y el procedimiento de doble ruta. `edge/src/**` sigue
+byte-idéntico a R4. B-1 y B-2 **no** se tocan: siguen pendientes de decisión (ver RELEASE_REPORT §6).
+
+| Id | Cambio | Ficheros |
+|---|---|---|
+| R3-01 (P2) | `verify-release` rechaza cualquier nombre de entrada no canónico (`./`, `//`, `\`, segmentos `.`/`..` o vacíos, caracteres de control, `/` final) **antes** de aplicar los filtros: `ZIP_ENTRY_NOT_CANONICAL` | `deployer/lib/release.mjs` |
+| R3-02 (P2) | la suite del deployer se ancla **por fichero**: `deployer/test/expected-tests.json` declara cada fichero y su número de tests; el veredicto sale de un reporter estructurado (`deployer/lib/test-reporter.mjs`), no del resumen de texto. 0 tests, salida prematura, fichero omitido o no declarado → FAIL | `release.mjs`, `test-reporter.mjs` (**A**), `test/expected-tests.json` (**A**) |
+| R3-03 (P2) | entre los runs Cloudflare del **mismo build**, gobierna el más reciente: un FAIL/PARTIAL posterior bloquea PROD aunque exista un PASS anterior; la evidencia caduca a los **7 días** | `deployer/lib/prod.mjs` |
+| R3-07 (P3) | **un único** procedimiento de cambio de ruta (cutover y rollback de transporte), definido en código y citado por el RUNBOOK: `cutover-check` lo imprime (fila C9), `cutover` pide `ROUTE SWITCH WINDOW READY`, `rollback-transport` imprime el mismo texto | `prod.mjs`, `RUNBOOK_VIGENTE.md` §5/§8/§9 |
 
 ## R3 (2026-09-26) · correcciones de la re-auditoría independiente de R2
 

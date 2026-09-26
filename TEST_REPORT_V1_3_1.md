@@ -1,7 +1,7 @@
-# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R3 — TEST REPORT
+# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R3.1 — TEST REPORT
 
-**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R3 (remediación de la auditoría externa de R1 y de la re-auditoría independiente de R2) · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
-**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r3`
+**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R3.1 (correcciones R3-01/02/03/07 de la auditoría de R3) · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
+**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r3.1`
 (`node:22-bookworm-slim@sha256:43ac6c60…772c`, Node 22, wrangler 4.132.0, vitest 2.1.9,
 @cloudflare/vitest-pool-workers 0.5.40), contenedor con rootfs **read-only**, uid **no-root**,
 `cap_drop: ALL`, red bridge **sin salida**, host de 4 vCPU. Resultados exactos, evidencias y tiempos
@@ -18,10 +18,10 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 | Edge · guardián de red hermética (nuevo) | 2 | PASS |
 | Edge · consumer con solo su entrada de `DESTINATIONS` (nuevo) | 3 | PASS |
 | **Edge total** | **95** | **95/95 PASS** |
-| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, veredictos de la puerta con **vitest real**, integridad del ZIP, lanzador bajo enlaces simbólicos y duros, cobertura del binding, runner de gates, backlog, id de despliegue) | 56 | PASS |
+| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, veredictos de la puerta con **vitest real**, integridad del ZIP, lanzador bajo enlaces simbólicos y duros, cobertura del binding, ancla por fichero con node:test real, nombres de entrada ZIP canónicos, runner de gates, backlog, id de despliegue) | 58 | PASS |
 | Deployer · equivalencia con los TOML de R4: **config completo** de los 6 configs (lector de wrangler) | 6 | PASS |
-| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 19 | PASS |
-| **Deployer total** | **81** | **81/81 PASS** |
+| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 20 | PASS |
+| **Deployer total** | **84** | **84/84 PASS** |
 | Ensayo local de gates STAGING (Miniflare, bundles exactos) | 13 ejecutados + 5 `CLOUD_ONLY` | PASS |
 | Gate físico sobre el ZIP final (imagen construida desde la carpeta extraída, lanzador `./kawa-edge`, uid 1026:100) | verify-fast + test-full + rehearse | PASS |
 
@@ -29,8 +29,10 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 
 **Regla de veredicto (R2, F-01/F-11).** `test-full` solo es PASS si: vitest sale con código 0, informa
 `success`, ninguna suite falla y **cada fichero `edge/test/*.test.js` presente en disco aparece ejecutado y
-en verde** (un fichero que no carga, o que no se ejecuta, es FAIL aunque el resto pase); y node:test sale con 0,
-con más de 0 tests y 0 fallos. La evidencia resultante va firmada (HMAC, clave local) y `package` rechaza
+en verde** (un fichero que no carga, o que no se ejecuta, es FAIL aunque el resto pase); y node:test sale con 0 y **cada fichero `deployer/test/*.test.mjs` declarado en
+`deployer/test/expected-tests.json` informa exactamente su número de tests, todos en verde** (R3.1, R3-02: el
+veredicto sale de un reporter estructurado, no del resumen de texto; 0 tests, salida prematura con
+`process.exit`, fichero omitido o no declarado → FAIL). La evidencia resultante va firmada (HMAC, clave local) y `package` rechaza
 evidencia sin firma o de otro árbol. La salida de vitest en R1 con código 1 tras 95/95 se debía a un enlace
 `node_modules/.vite` roto en el workspace temporal; corregido (el código ahora es 0 y se exige).
 

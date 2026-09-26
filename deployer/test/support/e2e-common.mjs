@@ -26,6 +26,7 @@ export async function world(opts = {}) {
  * listing the builds that STAGING really runs in the mock (so live corroboration can succeed).
  * `tamper` lets a test break one property at a time.
  */
+let fakeSeq = 0;
 export async function fakeStagingPass(sb, mock, tamper = {}) {
   const crypto = await import('node:crypto');
   const { canonical, bindingHash } = await import('../../lib/evidence.mjs');
@@ -41,7 +42,10 @@ export async function fakeStagingPass(sb, mock, tamper = {}) {
   }
   const gates = CLOUD_GATE_IDS.map(id => ({ id, status: id === tamper.skip ? 'SKIPPED' : 'PASS',
     evidence: id === 'G' ? { dlq: { verified: !tamper.dlqUnverified } } : id === 'K' ? { dispatch_attempts: tamper.noRedispatch ? 1 : 2 } : {} }));
-  const ev = { result: 'PASS', target: 'cloud', cleanup_errors: tamper.cleanup ? ['resume failed'] : [],
+  // Each call records a NEWER run than the previous one (R3-03: the most recent run of a build governs).
+  const started = tamper.started || new Date(Date.now() + (fakeSeq++) * 1000).toISOString();
+  const result = tamper.result || 'PASS';
+  const ev = { result, target: 'cloud', started, cleanup_errors: tamper.cleanup ? ['resume failed'] : [],
     binding_sha256: tamper.binding || bindingHash(pinnedVersion()), account_id: tamper.account || cfg.cloudflare.account_id,
     destinations_config: runtimeDestinations(tamper.destinations || cfg.staging.destinations),
     builds: tamper.builds || builds, gates, mandatory_gates: tamper.mandatory || CLOUD_GATE_IDS };
@@ -52,7 +56,7 @@ export async function fakeStagingPass(sb, mock, tamper = {}) {
     value: crypto.createHmac('sha256', key).update(canonical(ev)).digest('hex') } };
   const dir = path.join(sb.stateDir, 'evidence');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'staging-gates-cloud-2026-09-26T00-00-00-000Z-PASS.json'), JSON.stringify(signed));
+  fs.writeFileSync(path.join(dir, `staging-gates-cloud-${started.replace(/[:.]/g, '-')}-${result}.json`), JSON.stringify(signed));
 }
 
 /** STAGING deployed in the mock (what a real install leaves), then a signed PASS for it. */

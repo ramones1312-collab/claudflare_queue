@@ -23,11 +23,11 @@ import { writeSigned, verify as verifySignature, readEvidence, hasEvidenceKey } 
 
 export const IDENTITY = {
   artifact: 'edge-signal-buffer-v1.3.1-nas',
-  revision: 'R3 · external-audit remediation of R1 + independent re-audit of R2 (2026-09-26)',
+  revision: 'R3.1 · surgical fixes R3-01, R3-02, R3-03, R3-07 of the R3 audit (2026-09-26)',
   lineage: 'V1.3.1 <- V1.3.0 R4 CANDIDATE (zip sha256 1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867)',
   runtime_code: 'Edge Worker sources byte-identical to V1.3.0 R4',
 };
-export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3_2026-09-26.zip';
+export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.1_2026-09-26.zip';
 export const EVIDENCE_NAME = 'TEST_EVIDENCE_V1_3_1.json';
 const ZIP_ROOT = 'kawa-edge-nas';
 
@@ -68,24 +68,59 @@ export function edgeVerdict(res, code, expectedFiles) {
   return { ok: reasons.length === 0, reasons };
 }
 
-export function deployerVerdict(summary, code) {
+/**
+ * R3-02 · The deployer suite is anchored per FILE: `deployer/test/expected-tests.json` declares every
+ * test file and how many top-level tests it contains. PASS only if node:test exits 0 and every expected
+ * file reported exactly that many tests, all passed, none skipped or todo. A file that registers 0
+ * tests, exits early, is omitted, or is not declared is FAIL. `events` come from the structured
+ * reporter (deployer/lib/test-reporter.mjs); a file-level entry (name = file) is not a test.
+ */
+export function deployerVerdict(events, code, expected) {
   const reasons = [];
   if (code !== 0) reasons.push(`node --test exit code ${code}`);
-  if (!summary.tests) reasons.push('0 tests ran');
-  if (summary.fail || summary.cancelled) reasons.push(`${summary.fail} failed, ${summary.cancelled} cancelled`);
-  if (summary.pass !== summary.tests) reasons.push(`passed ${summary.pass} of ${summary.tests}`);
-  return { ok: reasons.length === 0, reasons };
+  const byFile = new Map(Object.keys(expected).map(f => [f, []]));
+  for (const e of events) {
+    if (e.fileLevel) { if (!e.ok) reasons.push(`${e.file}: file failed`); continue; }
+    if (!byFile.has(e.file)) { reasons.push(`${e.file}: not declared in expected-tests.json`); continue; }
+    byFile.get(e.file).push(e);
+  }
+  for (const [f, list] of byFile) {
+    if (!(expected[f] >= 1)) reasons.push(`${f}: anchor declares no test`);
+    if (list.length !== expected[f]) reasons.push(`${f}: ${list.length} of ${expected[f]} expected tests reported`);
+    const bad = list.filter(e => !e.ok || e.skip || e.todo);
+    if (bad.length) reasons.push(`${f}: ${bad.length} failed/skipped/todo`);
+  }
+  if (!Object.keys(expected).length) reasons.push('0 test files');
+  const all = [...byFile.values()].flat();
+  return { ok: reasons.length === 0, reasons, tests: all.length, pass: all.filter(e => e.ok && !e.skip && !e.todo).length };
+}
+
+export const EXPECTED_TESTS_FILE = path.join(DEPLOYER_DIR, 'test', 'expected-tests.json');
+/** The anchor must declare exactly the test files on disk: a file added or removed without it is FAIL. */
+export function expectedDeployerTests(files) {
+  const anchor = JSON.parse(fs.readFileSync(EXPECTED_TESTS_FILE, 'utf8'));
+  const onDisk = fs.readdirSync(path.join(DEPLOYER_DIR, 'test')).filter(f => f.endsWith('.test.mjs'));
+  const reasons = [];
+  for (const f of onDisk) if (!(f in anchor)) reasons.push(`${f}: on disk but not declared in expected-tests.json`);
+  for (const f of Object.keys(anchor)) if (!onDisk.includes(f)) reasons.push(`${f}: declared but missing on disk`);
+  const run = new Set(files.map(f => path.basename(f)));
+  return { expected: Object.fromEntries(Object.entries(anchor).filter(([f]) => run.has(f))), reasons };
 }
 
 async function runDeployerSuite(files) {
   if (!files.length) return { ok: true, pass: 0, fail: 0, tests: 0, ms: 0, files: 0, reasons: [] };
-  const r = await run(process.execPath, ['--test', '--test-reporter=spec', ...files], { tee: true });
-  // node:test's own summary, not a count of ✔ lines (which also match nested/suite lines).
-  const num = (k) => { const m = new RegExp(`^ℹ ${k} (\\d+)`, 'm').exec(r.text); return m ? Number(m[1]) : 0; };
-  const summary = { tests: num('tests'), pass: num('pass'), fail: num('fail'), cancelled: num('cancelled') };
-  const v = deployerVerdict(summary, r.code);
+  const { expected, reasons: anchorReasons } = expectedDeployerTests(files);
+  const evFile = path.join(os.tmpdir(), `kawa-dep-${crypto.randomBytes(4).toString('hex')}.jsonl`);
+  const r = await run(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
+    `--test-reporter=${path.join(DEPLOYER_DIR, 'lib', 'test-reporter.mjs')}`, `--test-reporter-destination=${evFile}`, ...files], { tee: true });
+  let events = [];
+  try { events = fs.readFileSync(evFile, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { /* none: verdict FAIL */ }
+  fs.rmSync(evFile, { force: true });
+  const v = deployerVerdict(events, r.code, expected);
+  v.reasons.unshift(...anchorReasons);
+  const ok = v.ok && !anchorReasons.length;
   for (const x of v.reasons) out.fail(`deployer suite: ${x}`);
-  return { ok: v.ok, reasons: v.reasons, ...summary, ms: r.ms, files: files.length, code: r.code };
+  return { ok, reasons: v.reasons, tests: v.tests, pass: v.pass, fail: v.tests - v.pass, cancelled: 0, ms: r.ms, files: files.length, code: r.code };
 }
 
 /**
@@ -283,7 +318,12 @@ export async function verifyRelease(ctx, f) {
   // F-06 · inspect the RAW entry list, not a filtered directory listing: every entry must be under the
   // package root, declared in the manifest, and nothing secret/stateful may be present at all.
   const entries = readZip(zip).map(e => e.name);
-  const outside = entries.filter(n => !n.startsWith(`${ZIP_ROOT}/`) || n.includes('..') || n.startsWith('/'));
+  // R3-01 · names are checked in CANONICAL form only: `./`, `//`, `\`, `.`/`..` segments, empty segments,
+  // control characters or a trailing `/` are refused outright (unzip would resolve them into secrets/,
+  // config/, state/ … while a textual filter would not match them).
+  const notCanonical = entries.filter(n => /[\\\x00-\x1f\x7f]/.test(n) || n.split('/').some(x => x === '' || x === '.' || x === '..') || path.posix.normalize(n) !== n);
+  if (notCanonical.length) throw new KawaError('ZIP_ENTRY_NOT_CANONICAL', notCanonical.slice(0, 5).map(n => JSON.stringify(n)).join(', '));
+  const outside = entries.filter(n => !n.startsWith(`${ZIP_ROOT}/`));
   if (outside.length) throw new KawaError('ZIP_ENTRY_OUTSIDE_ROOT', outside.slice(0, 5).join(', '));
   const rel = entries.map(n => n.slice(ZIP_ROOT.length + 1));
   const forbiddenRaw = rel.filter(p => /(^|\/)node_modules\/|(^|\/)\.git\/|^state\/|^dist\/|^secrets\/(?!README\.md$)|^config\/kawa-edge\.json|^config\/.*\.(bak|tmp)-|(^|\/)\.dev\.vars$|(^|\/)\.npmrc$|(^|\/)\.env$|^edge\/wrangler\.(toml|json)$|\.(zip|sha256|log)$/.test(p));

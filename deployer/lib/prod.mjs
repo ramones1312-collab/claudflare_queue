@@ -139,57 +139,63 @@ export async function stagingTeardown(ctx, f) {
   return { result: 'PASS', detail: `STAGING Workers deleted${f.queues ? ' and queues' : ' (queues kept; --queues to delete them)'}`, report: file };
 }
 
+/** R3-03 · a STAGING run older than this no longer authorises PROD. */
+export const STAGING_PASS_MAX_AGE_DAYS = 7;
+
 /**
- * THE gate in front of every PROD write (prod-deploy, add-hub --env prod, cutover): the newest
- * Cloudflare STAGING run that
- *   - is signed by this installation (not hand-written, edited or copied in),
- *   - passed EVERY gate of the list fixed in code (CLOUD_GATE_IDS), with no cleanup error,
- *   - verified the DLQ record on the platform (gate G) and a real redispatch (gate K),
- *   - is bound to exactly this deployer + Edge code + lockfile + wrangler (bindingHash),
- *   - ran on the same Cloudflare account,
- *   - gate-tested every PROD destination with the same runtime settings (timeout, retry).
+ * THE gate in front of every PROD write (prod-deploy, add-hub --env prod, cutover). Among the
+ * Cloudflare STAGING runs of THIS build (bindingHash: deployer + Edge code + lockfile + wrangler), the
+ * MOST RECENT one governs (R3-03): if it is FAIL or PARTIAL, PROD is BLOCKED even if an older run of
+ * the same build passed. That run must also
+ *   - be signed by this installation (not hand-written, edited or copied in),
+ *   - be at most STAGING_PASS_MAX_AGE_DAYS old,
+ *   - have passed EVERY gate of the list fixed in code (CLOUD_GATE_IDS), with no cleanup error,
+ *   - have verified the DLQ record on the platform (gate G) and a real redispatch (gate K),
+ *   - have run on the same Cloudflare account,
+ *   - have gate-tested every PROD destination, enabled, with the same runtime settings (timeout, retry).
  * Returns { pass } or { reasons } — never throws on a corrupt file.
  */
-export async function findStagingPass(cfg, { prodDests = null } = {}) {
+export async function findStagingPass(cfg, { prodDests = null, now = Date.now() } = {}) {
   const dir = path.join(STATE_DIR, 'evidence');
-  const reasons = [];
   if (!fs.existsSync(dir)) return { reasons: ['no evidence directory'] };
   const binding = currentBinding();
   const reg = await edgeRegistry();
   const parse = (list) => Object.fromEntries(reg.allDestinations({ DESTINATIONS: JSON.stringify(runtimeDestinations(list)) }).map(d => [d.id, { timeout_ms: d.timeout_ms, retry: d.retry, enabled: d.enabled }]));
   const wantProd = prodDests || (cfg.envs.prod ? cfg.envs.prod.destinations : []);
-  const files = fs.readdirSync(dir).filter(n => /^staging-gates-cloud-.*-PASS\.json$/.test(n)).sort().reverse();
-  for (const n of files) {
-    const e = readEvidence(path.join(dir, n));
-    const why = [];
-    if (!e) { reasons.push(`${n}: unreadable`); continue; }
-    if (!verifySignature(e)) why.push('not signed by this installation');
-    if (e.result !== 'PASS' || e.target !== 'cloud') why.push('not a Cloudflare PASS');
-    if ((e.cleanup_errors || []).length) why.push('cleanup errors');
-    const byId = new Map((e.gates || []).map(g => [g.id, g]));
-    const missing = CLOUD_GATE_IDS.filter(id => !byId.has(id) || byId.get(id).status !== 'PASS');
-    if (missing.length) why.push(`gates not PASS: ${missing.join(',')}`);
-    const g = byId.get('G');
-    if (!(g && g.evidence && g.evidence.dlq && g.evidence.dlq.verified === true)) why.push('DLQ record not platform-verified (gate G; needs Account Analytics: Read)');
-    const k = byId.get('K');
-    if (!(k && k.evidence && k.evidence.dispatch_attempts >= 2)) why.push('no redispatch proven (gate K)');
-    if (e.binding_sha256 !== binding) why.push('different deployer/Edge/wrangler build');
-    if (e.account_id !== cfg.account_id) why.push('different Cloudflare account');
-    try {
-      const tested = parse(e.destinations_config || []);
-      for (const [id, d] of Object.entries(parse(wantProd))) {
-        const t = tested[id];
-        if (!t) why.push(`${id} was never gate-tested in STAGING`);
-        // N-4 · a destination that was DISABLED in STAGING received no signal from the gates: not tested.
-        else if (t.enabled === false) why.push(`${id} was disabled in the STAGING run: never gate-tested`);
-        else if (JSON.stringify([t.timeout_ms, t.retry]) !== JSON.stringify([d.timeout_ms, d.retry])) why.push(`${id}: PROD timeout/retry differ from what STAGING tested`);
-      }
-    } catch (err) { why.push(`destinations: ${err.code || err.message}`); }
-    if (!why.length) return { pass: { file: n, e } };
-    reasons.push(`${n}: ${why.join('; ')}`);
-  }
-  if (!files.length) reasons.push('no Cloudflare STAGING PASS evidence');
-  return { reasons };
+  const all = fs.readdirSync(dir).filter(n => /^staging-gates-cloud-.*\.json$/.test(n))
+    .map(n => ({ n, e: readEvidence(path.join(dir, n)) })).filter(r => r.e);
+  const runs = all.filter(r => r.e.binding_sha256 === binding)
+    .map(r => ({ ...r, t: Date.parse(r.e.started) }))
+    .sort((a, b) => (Number.isFinite(b.t) ? b.t : -Infinity) - (Number.isFinite(a.t) ? a.t : -Infinity) || (a.n < b.n ? 1 : -1));
+  if (!runs.length) return { reasons: [all.length ? `no Cloudflare STAGING run of this build (${all.length} run(s) of other builds)` : 'no Cloudflare STAGING PASS evidence'] };
+  const { n, e, t } = runs[0];
+  const why = [];
+  if (e.result !== 'PASS' || e.target !== 'cloud') why.push(`the most recent Cloudflare STAGING run of this build is ${e.result} (an older PASS does not count)`);
+  if (!verifySignature(e)) why.push('not signed by this installation');
+  if (!Number.isFinite(t)) why.push('no start time');
+  else if (now - t > STAGING_PASS_MAX_AGE_DAYS * 86400e3) why.push(`older than ${STAGING_PASS_MAX_AGE_DAYS} days (${e.started}): re-run ./kawa-edge gates`);
+  else if (t - now > 3600e3) why.push(`start time in the future (${e.started})`);
+  if ((e.cleanup_errors || []).length) why.push('cleanup errors');
+  const byId = new Map((e.gates || []).map(g => [g.id, g]));
+  const missing = CLOUD_GATE_IDS.filter(id => !byId.has(id) || byId.get(id).status !== 'PASS');
+  if (missing.length) why.push(`gates not PASS: ${missing.join(',')}`);
+  const g = byId.get('G');
+  if (!(g && g.evidence && g.evidence.dlq && g.evidence.dlq.verified === true)) why.push('DLQ record not platform-verified (gate G; needs Account Analytics: Read)');
+  const k = byId.get('K');
+  if (!(k && k.evidence && k.evidence.dispatch_attempts >= 2)) why.push('no redispatch proven (gate K)');
+  if (e.account_id !== cfg.account_id) why.push('different Cloudflare account');
+  try {
+    const tested = parse(e.destinations_config || []);
+    for (const [id, d] of Object.entries(parse(wantProd))) {
+      const td = tested[id];
+      if (!td) why.push(`${id} was never gate-tested in STAGING`);
+      // N-4 · a destination that was DISABLED in STAGING received no signal from the gates: not tested.
+      else if (td.enabled === false) why.push(`${id} was disabled in the STAGING run: never gate-tested`);
+      else if (JSON.stringify([td.timeout_ms, td.retry]) !== JSON.stringify([d.timeout_ms, d.retry])) why.push(`${id}: PROD timeout/retry differ from what STAGING tested`);
+    }
+  } catch (err) { why.push(`destinations: ${err.code || err.message}`); }
+  if (!why.length) return { pass: { file: n, e } };
+  return { reasons: [`${n}: ${why.join('; ')}`] };
 }
 
 /** Live corroboration: STAGING on Cloudflare still runs exactly the builds the gates certified. */
@@ -294,6 +300,23 @@ export async function hubCheck(ctx, f) {
   return { result: 'BLOCKED', detail: `${id} transport check blocked by B-2` };
 }
 
+/**
+ * R3-07 · ONE route-switch procedure (F-14), the same for cutover (direct -> Edge) and transport rollback
+ * (Edge -> direct). Printed by cutover-check (C9), cutover and rollback-transport; RUNBOOK §5 quotes it.
+ * Why: the two routes have no order between them, so the old route must hold nothing still to deliver.
+ */
+export const ROUTE_SWITCH_PROCEDURE = Object.freeze([
+  '1. Window: strategy inactive (no alert expected) for the whole switch.',
+  '2. Old route drained BEFORE switching. Cutover: nothing to drain (direct delivery is synchronous) and PROD',
+  '   queues clean (C6). Rollback: `./kawa-edge status prod` shows every PROD queue backlog = 0; if it is > 0 and',
+  '   falling, WAIT until 0 (the Edge keeps delivering in order), then switch.',
+  '3. Switch ALL KAWA alerts in TradingView in the same window.',
+  '4. Rollback with the HUB_A line HALTED (backlog does not fall): switch anyway. The halted signals are older',
+  '   than any direct signal from now on: they must NOT be resumed (retry) without an owner decision (and in',
+  '   PROD there is no retry path until B-1). Never run both routes with the Edge still delivering.',
+]);
+const printProcedure = () => { for (const l of ROUTE_SWITCH_PROCEDURE) out.info(l); };
+
 export async function cutoverCheck(ctx, f) {
   const cfg = await loadConfig(ctx.configFile);
   const checks = [];
@@ -321,6 +344,8 @@ export async function cutoverCheck(ctx, f) {
   add('C5', 'HUB_A GREEN', 'MANUAL', 'owner attests from the Hub UI (8180) at cutover time; the deployer never contacts the Hub');
   add('C7', 'Rollback documented and rehearsed', pass && pass.e.gates.some(g => g.id === 'RB' && g.status === 'PASS') ? 'PASS' : 'FAIL', 'RUNBOOK_VIGENTE §8; STAGING gate RB (rollback-readiness ok:true)');
   add('C8', 'Owner approval', 'MANUAL', 'typed at ./kawa-edge cutover');
+  add('C9', 'Route-switch window (one procedure for cutover and rollback)', 'MANUAL', 'typed at ./kawa-edge cutover; procedure below');
+  printProcedure();
   const blocked = checks.filter(c => ['BLOCKED', 'FAIL', 'UNKNOWN'].includes(c.status));
   const file = writeReport('cutover-check', { checks, blockers: BLOCKERS });
   return { result: blocked.length ? 'BLOCKED' : 'PASS', detail: blocked.length ? `cutover NOT allowed: ${blocked.map(c => c.id).join(', ')}` : 'all automatic preconditions met', report: file };
@@ -337,6 +362,9 @@ export async function cutover(ctx, f) {
   await localChecks({ cfg, env: 'prod', wrangler: createWrangler({ quiet: true }), dryRun: false, inContainer: !!process.env.KAWA_IN_CONTAINER });  // H-15 · manifest re-verified
   const green = await promptLine('C5 · Type HUB_A IS GREEN after checking the Hub UI (8180) yourself: ');
   if (green !== 'HUB_A IS GREEN') return { result: 'BLOCKED', detail: 'HUB_A GREEN not attested' };
+  printProcedure();
+  const win = await promptLine('C9 · Type ROUTE SWITCH WINDOW READY once steps 1-2 hold: ');
+  if (win !== 'ROUTE SWITCH WINDOW READY') return { result: 'BLOCKED', detail: 'route-switch window not confirmed' };
   const phrase = await promptLine('Type exactly "CUTOVER HUB_A APPROVED" (owner): ');
   if (phrase !== 'CUTOVER HUB_A APPROVED') return { result: 'BLOCKED', detail: 'owner approval not given' };
   const cloud = await cloudContext(cfg);
@@ -358,15 +386,13 @@ export async function rotateProdPathToken(cfg, cloud) {
 }
 
 export async function rollbackTransport() {
-  out.step('IMMEDIATE TRANSPORT ROLLBACK (TradingView -> direct HUB_A)');
+  out.step('IMMEDIATE TRANSPORT ROLLBACK (TradingView -> direct HUB_A) · same procedure as cutover (C9)');
+  printProcedure();
   for (const l of [
-    '1. In TradingView, set every KAWA alert\'s webhook URL back to https://' + HARD_LOCKS.HUB_A_PUBLIC_HOST + '/webhook/<WEBHOOK_SECRET>.',
-    '   (The owner holds that URL. It is the one in use today; the deployer never stores or prints it.)',
-    '2. Nothing changes in Cloudflare Tunnel, the hostname, HUB_A or its ports (8181 -> 8081 ingress).',
-    '3. The PROD Edge keeps delivering what it already accepted (at-least-once, strict order);',
-    '   HUB_A deduplicates by signal_id. Leave the PROD Edge running until it is drained.',
-    '4. FULL Edge rollback (removing the PROD Edge) follows R4 §6: stop admission, drain, rollback-readiness ok:true.',
-    '   Drain verification in PROD is blocked by B-1 (no PROD admin/readiness surface). See RUNBOOK_VIGENTE §8.',
+    'Direct URL for step 3: https://' + HARD_LOCKS.HUB_A_PUBLIC_HOST + '/webhook/<WEBHOOK_SECRET> (the owner holds it; the deployer never stores or prints it).',
+    'Nothing changes in Cloudflare Tunnel, the hostname, HUB_A or its ports (8181 -> 8081 ingress).',
+    'FULL Edge rollback (removing the PROD Edge) follows R4 §6: stop admission, drain, rollback-readiness ok:true.',
+    'Drain verification beyond queue backlog is blocked by B-1 (no PROD admin/readiness surface). See RUNBOOK_VIGENTE §5/§8.',
   ]) out.info(l);
   return { result: 'PASS', detail: 'checklist printed; no change made' };
 }

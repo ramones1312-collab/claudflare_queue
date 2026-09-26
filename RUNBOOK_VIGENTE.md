@@ -155,7 +155,7 @@ el borrado queda cubierto por los tests de workerd (`contract > 11b`, `R21`).
 
 `sudo ./kawa-edge cutover-check` (no cambia nada):
 
-| # | Precondición | Estado en V1.3.1 R2 |
+| # | Precondición | Estado en V1.3.1 (revisión actual) |
 |---|---|---|
 | C1 | STAGING PASS firmado, completo y corroborado para este build (§4) | automático |
 | C2 | PROD desplegado, gestionado, al día, secretos presentes | automático |
@@ -165,13 +165,20 @@ el borrado queda cubierto por los tests de workerd (`contract > 11b`, `R21`).
 | C6 | colas PROD limpias | automático con Analytics:Read; sin muestra o sin permiso = `UNKNOWN` (bloquea) |
 | C7 | rollback documentado y ensayado | gate RB de STAGING |
 | C8 | aprobación expresa del owner | se escribe en `cutover` |
-| C9 | ventana de doble ruta (ver abajo) | manual: procedimiento del owner |
+| C9 | ventana de cambio de ruta: procedimiento único (abajo) | `cutover-check` lo imprime; `cutover` pide `ROUTE SWITCH WINDOW READY` |
 
-**C9 · Doble ruta durante el cutover y el rollback (auditoría F-14).** Mientras se cambian las alertas de
-TradingView, unas llegan directas a HUB_A y otras por el Edge: **no hay orden entre las dos rutas**. Y en un
-rollback, un backlog del Edge que se reanude llegaría **después** de señales directas más nuevas. Procedimiento
-exigido: cutover y rollback solo con la estrategia inactiva (sin alertas esperadas), cambiando **todas** las
-alertas en la misma ventana, y en rollback, drenar el Edge **antes** de volver a enviar directo (R4 §6).
+**C9 · Procedimiento ÚNICO de cambio de ruta — cutover y rollback de transporte (F-14, R3-07).** Las dos
+rutas (directa y Edge) no tienen orden entre sí, así que la ruta antigua no debe tener nada pendiente de
+entregar. Es el mismo texto que imprimen `cutover-check`, `cutover` y `rollback-transport`:
+
+1. **Ventana:** estrategia inactiva (ninguna alerta esperada) durante todo el cambio.
+2. **Ruta antigua drenada ANTES de cambiar.** Cutover: no hay nada que drenar (la entrega directa es síncrona)
+   y las colas PROD están limpias (C6). Rollback: `./kawa-edge status prod` muestra backlog = 0 en todas las
+   colas PROD; si es > 0 y baja, **esperar** a 0 (el Edge sigue entregando en orden) y entonces cambiar.
+3. **Cambiar TODAS** las alertas KAWA de TradingView en la misma ventana.
+4. **Rollback con la línea HUB_A en HALT** (el backlog no baja): cambiar igualmente. Las señales detenidas son
+   más antiguas que cualquier señal directa posterior: **no** se reanudan (retry) sin decisión del owner (y en
+   PROD no hay retry hasta B-1). Nunca las dos rutas con el Edge aún entregando.
 
 `sudo ./kawa-edge cutover` se niega mientras haya un BLOCKED/FAIL. Cuando todo esté en verde (revisión
 futura que resuelva B-1 y B-2): pide la frase `CUTOVER HUB_A APPROVED`, **rota** el path token del ingress
@@ -227,10 +234,9 @@ implementada):
 
 ## 8. Rollback
 
-**a) Rollback inmediato de transporte** (`./kawa-edge rollback-transport` imprime la lista):
-en TradingView, volver a poner en cada alerta `https://vector-hook.integrademia.com/webhook/<WEBHOOK_SECRET>`
-(la URL actual, que tiene el owner). No se toca Tunnel, hostname, HUB_A ni puertos. Lo ya aceptado por el
-Edge sigue entregándose en orden (at-least-once); HUB_A deduplica por `signal_id`.
+**a) Rollback inmediato de transporte** (`./kawa-edge rollback-transport` imprime la lista): **el mismo
+procedimiento único de §5 (C9)**; en el paso 3 la URL es `https://vector-hook.integrademia.com/webhook/<WEBHOOK_SECRET>`
+(la actual, que tiene el owner). No se toca Tunnel, hostname, HUB_A ni puertos.
 
 **b) Rollback completo del Edge** (retirar el Edge PROD) — contrato R4 §6: detener la admisión, drenar
 todas las colas y DLQ, `rollback-readiness ok:true` (`blockers: []`), resolver cada `FAILED_PERMANENT` con
@@ -256,7 +262,7 @@ nada queda referenciado), test E2E de que `cutover` se niega.
 
 - **F-10 · redespliegue del ingress PROD** reinicia el Sequencer (posible 503 no reintentado por TradingView):
   confirmación escrita obligatoria y solo sin alertas esperadas (§4).
-- **F-14 · doble ruta** en cutover/rollback: procedimiento C9 (§5).
+- **F-14 · doble ruta** en cutover/rollback: procedimiento único C9 (§5), impreso por `cutover-check`, `cutover` y `rollback-transport` (R3-07).
 - **H-16 · PROD nunca se ejercita antes de la primera señal real**: consecuencia directa de B-2; queda cubierto
   cuando exista el probe no-trading.
 - **OBS-1 (R4, fuera de alcance):** `_notifyHalt` hace `fetch` sin timeout (dentro de `waitUntil`); propuesta

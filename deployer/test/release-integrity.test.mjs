@@ -32,14 +32,17 @@ test('F-04 · test evidence with the right hash but not signed here is refused',
 });
 
 /** A minimal but complete package, zipped exactly like `package` does, with optional extra raw entries. */
-function makeZip(extra = [], { sha = true, manifestLine = true, signed = true, raw = null } = {}) {
+function makeZip(extra = [], { sha = true, manifestLine = true, signed = true, raw = null, declare = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ri-pkg-'));
   const files = { 'Dockerfile': 'FROM x', 'docker-compose.yml': 'x', 'kawa-edge': '#!/bin/sh', 'README_NAS_INSTALL.md': 'x', 'RUNBOOK_VIGENTE.md': 'x',
                   'edge/package-lock.json': '{}', 'config/kawa-edge.example.json': '{}', 'edge/src/a.js': 'a' };
   for (const [p, c] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(root, p)), { recursive: true }); fs.writeFileSync(path.join(root, p), c); }
   const ev = { result: 'PASS', input_tree_sha256: inputTreeHash(root), edge_suite: ok, deployer_suite: ok };
   if (signed) writeSigned(path.join(root, EVIDENCE_NAME), ev); else fs.writeFileSync(path.join(root, EVIDENCE_NAME), JSON.stringify(ev));
-  fs.writeFileSync(path.join(root, MANIFEST_NAME), JSON.stringify(buildManifest(root, { artifact: 't', revision: 'r' })));
+  const man = buildManifest(root, { artifact: 't', revision: 'r' });
+  // declare: the attacker also re-seals the manifest with the extra entries (auditor R3-01 cases)
+  if (declare) { for (const e of extra) man.files[e.replace(/^kawa-edge-nas\//, '')] = crypto.createHash('sha256').update('SECRET').digest('hex'); man.file_count = Object.keys(man.files).length; }
+  fs.writeFileSync(path.join(root, MANIFEST_NAME), JSON.stringify(man));
   const entries = listPackageFiles(root).map(p => ({ name: `kawa-edge-nas/${p}`, data: fs.readFileSync(path.join(root, p)) }));
   for (const e of extra) entries.push({ name: e, data: Buffer.from('SECRET') });
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'ri-zip-'));
@@ -125,4 +128,13 @@ test('N-6 · a malformed evidence key fails closed', async () => {
     fs.writeFileSync(kf, '');
     assert.throws(() => writeSigned(path.join(STATE, 'x.json'), { a: 1 }), { code: 'EVIDENCE_KEY_INVALID' });
   } finally { fs.writeFileSync(kf, good); }
+});
+
+test('R3-01 · equivalent spellings of secrets/, config/, state/ paths are refused even when the manifest declares them', async () => {
+  for (const name of ['kawa-edge-nas/./secrets/cloudflare_api_token', 'kawa-edge-nas//secrets/cloudflare_api_token',
+                      'kawa-edge-nas/secrets/./cloudflare_api_token', 'kawa-edge-nas/./config/kawa-edge.json',
+                      'kawa-edge-nas/secrets\\cloudflare_api_token', 'kawa-edge-nas/./state/.evidence-key',
+                      'kawa-edge-nas/edge/./node_modules/x.js', 'kawa-edge-nas/edge/src/../../secrets/x', 'kawa-edge-nas/secrets/']) {
+    await assert.rejects(verify(makeZip([name], { declare: true })), { code: 'ZIP_ENTRY_NOT_CANONICAL' }, name);
+  }
 });
