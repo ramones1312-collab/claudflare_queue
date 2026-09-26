@@ -28,6 +28,20 @@ export default defineWorkersConfig({
             // per-scenario Worker env value.
             HALT_NOTIFY_URL: 'https://halt-notify.test/hook',
           },
+          // V1.3.1 · HERMETIC EGRESS. Every halt makes the DO call HALT_NOTIFY_URL with the real
+          // global fetch; only scenario_halt_notify intercepts it. Without this, the other ~80 calls
+          // left the runtime as REAL DNS lookups of `halt-notify.test`, so the suite's timing
+          // depended on the host resolver: fast NXDOMAIN -> 90/90; a resolver that hangs (Synology
+          // bridge network) -> the ONE shared workerd runtime stalls and unrelated files hit the
+          // 5000 ms test timeout (53/90 on the NAS; 50/90 reproduced with --dns 192.0.2.1).
+          // Nothing leaves the runtime now: the notification collector answers locally and any
+          // other host fails immediately, as NXDOMAIN would. Production code is untouched.
+          outboundService: (request) => {
+            const host = new URL(request.url).hostname;
+            if (host === 'halt-notify.test') return new Response(null, { status: 204 });
+            console.error(`[hermetic] blocked outbound request to ${host}`);
+            return Response.error();
+          },
         },
       },
     },
