@@ -1,0 +1,31 @@
+# TEMPLATE ONLY — never commit real values, never ship this file with content.
+#
+# Names are DECLARED in each wrangler config under [secrets] required and set with a secrets file
+# (see the runbook). They must NEVER appear as [vars]: a plaintext var of the same name shadows the
+# real secret, and the Worker would read an empty string believing it had one.
+#
+# Cloudflare must NEVER hold: a Lighter private key, hub_admin_token, or any account credential.
+#
+# V1.3.0 · ONE CREDENTIAL PER DESTINATION. HUB_A's secret is bound only in HUB_A's consumer and
+# HUB_B's only in HUB_B's: neither Worker can read the other's. Never reuse one webhook token for
+# two Hubs.
+
+# --- kawa-staging-receiver ---------------------------------------------------------
+CONTROL_TOKEN=replace-with-a-long-random-STAGING-only-token
+
+# --- kawa-edge-ingress-stg (ingress + sequencer) -----------------------------------
+WEBHOOK_PATH_TOKEN=replace-with-a-STAGING-only-path-token
+HALT_NOTIFY_URL=https://replace-with-a-collector-independent-of-every-hub
+
+# --- kawa-edge-delivery-hub-a-stg ---------------------------------------------------
+# NO secret in STAGING: delivery is hard-locked to the staging receiver by Service Binding and
+# DEST_HUB_A_WEBHOOK_URL is a non-secret var whose host is never dialled.
+# In PRODUCTION, and only there:
+# DEST_HUB_A_WEBHOOK_URL=https://hub-a.example/webhook/<hub-a-path-token>
+
+# --- kawa-edge-delivery-hub-b-stg ---------------------------------------------------
+# Idem, with HUB_B's OWN token. Never the same value as HUB_A's.
+# DEST_HUB_B_WEBHOOK_URL=https://hub-b.example/webhook/<hub-b-path-token>
+
+# --- kawa-edge-admin-stg (delete after the STAGING gate) ---------------------------
+ADMIN_TOKEN=replace-with-a-long-random-STAGING-only-token

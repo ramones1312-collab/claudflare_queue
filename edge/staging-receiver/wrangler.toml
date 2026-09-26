@@ -1,0 +1,17 @@
+# STAGING RECEIVER · a KAWA stand-in with no ability to trade.
+# Deploy BEFORE the buffer. The observation ledger is a SQLite Durable Object so gate evidence
+# survives isolate eviction, which an in-memory ledger would not.
+name = "kawa-staging-receiver"
+main = "src/index.js"
+compatibility_date = "2024-12-18"
+
+[exports.ReceiverLedger]
+type = "durable-object"
+storage = "sqlite"
+
+[[durable_objects.bindings]]
+name = "LEDGER"
+class_name = "ReceiverLedger"
+
+[secrets]
+required = ["CONTROL_TOKEN"]

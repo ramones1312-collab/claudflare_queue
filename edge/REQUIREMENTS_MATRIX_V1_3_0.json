@@ -1,0 +1,227 @@
+{
+ "schema": "kawa.edge.requirements.matrix.v1",
+ "artifact": "edge-signal-buffer-v1.3.0-staging",
+ "lineage": "V1.3.0 <- V1.2.3 STAGING FROZEN",
+ "status": "CANDIDATE · NOT DEPLOYED · NOT PROD",
+ "suite": {
+  "total": 90,
+  "legacy_unchanged": 41,
+  "legacy_updated_by_policy_change": 1,
+  "new": 48,
+  "failed": 0
+ },
+ "count": 30,
+ "requirements": [
+  {
+   "id": "R1",
+   "requirement": "Una señal persistida una sola vez",
+   "implementation": "`signals` (body BLOB) + `deliveries(edge_seq,destination_id)`; `accept()` en una transacción",
+   "test": "`fanout > 1`",
+   "result": "PASS"
+  },
+  {
+   "id": "R2",
+   "requirement": "Entregas independientes por destino",
+   "implementation": "cabeza, halt, lease, cola, DLQ y credencial por destino",
+   "test": "`fanout > 2,3,4`",
+   "result": "PASS"
+  },
+  {
+   "id": "R3",
+   "requirement": "Un destino entregado no marca a otro",
+   "implementation": "`delivered()` avanza solo `next_seq_expected:<dest>`",
+   "test": "`fanout > 2`; `contract > 13`",
+   "result": "PASS"
+  },
+  {
+   "id": "R4",
+   "requirement": "Mismo `signal_id` para todos los Hubs",
+   "implementation": "el body viaja byte a byte; el Edge no lo parsea",
+   "test": "`fanout > 1`; `contract > 7`",
+   "result": "PASS"
+  },
+  {
+   "id": "R5",
+   "requirement": "Identidad de entrega inequívoca",
+   "implementation": "`delivery_id = E<edge_seq>:<destination_id>`, determinista",
+   "test": "`fanout > 1`; `contract > 8,12`",
+   "result": "PASS"
+  },
+  {
+   "id": "R6",
+   "requirement": "Metadata de transporte sin alterar campos de trading",
+   "implementation": "cabeceras `x-edge-*`; body intacto",
+   "test": "`contract > 7,8`; legacy `body integrity`",
+   "result": "PASS"
+  },
+  {
+   "id": "R7",
+   "requirement": "Configuración explícita de N destinos, sin hardcodear dos",
+   "implementation": "`src/destinations.js`, var `DESTINATIONS`, bindings `DEST_<ID>_*`",
+   "test": "`fanout > 10`; `contract > RULE 1`",
+   "result": "PASS"
+  },
+  {
+   "id": "R8",
+   "requirement": "Aislamiento total (timeout, HTTP, auth, retry)",
+   "implementation": "cola, consumer, secreto y política de retry por destino",
+   "test": "`fanout > 2,4`; `contract > 11`",
+   "result": "PASS"
+  },
+  {
+   "id": "R9",
+   "requirement": "Compatibilidad V1.2.3 con un solo destino",
+   "implementation": "registro legacy sobre bindings V1.2.3; destino implícito solo ahí",
+   "test": "`contract > 9` + 41 tests legacy",
+   "result": "PASS"
+  },
+  {
+   "id": "R10",
+   "requirement": "Persistencia durable ya existente, sin sustituir",
+   "implementation": "mismo DO SQLite; esquema 2 aditivo; migración en sitio",
+   "test": "`contract > 12`; legacy `recovery`",
+   "result": "PASS"
+  },
+  {
+   "id": "R11",
+   "requirement": "Separar SIGNAL RECORD de DELIVERY RECORDS",
+   "implementation": "dos tablas; el body no se duplica por destino",
+   "test": "`fanout > 1`",
+   "result": "PASS"
+  },
+  {
+   "id": "R12",
+   "requirement": "Reintentos reutilizados y extendidos por destino",
+   "implementation": "backoff de V1.2.3 + `retry` por destino en la config",
+   "test": "`contract > 11`; legacy `ack contract`",
+   "result": "PASS"
+  },
+  {
+   "id": "R13",
+   "requirement": "At-least-once seguro, sin exactly-once frágil",
+   "implementation": "turnstile + lease + `ALREADY_DELIVERED`; dedupe en el Hub",
+   "test": "`contract > 7,8`",
+   "result": "PASS"
+  },
+  {
+   "id": "R14",
+   "requirement": "TTL fuera del Edge",
+   "implementation": "no hay lógica de antigüedad operativa; solo retención técnica",
+   "test": "revisión de código; §6 arquitectura",
+   "result": "N/A (por diseño)"
+  },
+  {
+   "id": "R15",
+   "requirement": "Credenciales separadas y nunca expuestas",
+   "implementation": "`DEST_<ID>_WEBHOOK_URL` por consumer; redacción en logs",
+   "test": "`contract > 15`",
+   "result": "PASS"
+  },
+  {
+   "id": "R16",
+   "requirement": "Observabilidad: ¿qué pasó con esta señal?",
+   "implementation": "`signalStatus()` + `GET /signal` + `stats()` por destino",
+   "test": "`contract > 11,13`",
+   "result": "PASS"
+  },
+  {
+   "id": "R17",
+   "requirement": "Sin dependencia Hub→Hub",
+   "implementation": "fan-out desde el Edge; ningún consumer conoce a otro",
+   "test": "diseño + `fanout > 2,4`",
+   "result": "PASS"
+  },
+  {
+   "id": "R18",
+   "requirement": "El sequencer no se rompe con el fan-out",
+   "implementation": "invariante por destino; orden de origen preservado",
+   "test": "`contract > 14`; legacy `reorder`",
+   "result": "PASS"
+  },
+  {
+   "id": "R19",
+   "requirement": "Sin histórico al añadir un destino",
+   "implementation": "la cabeza nace con su primera entrega debida",
+   "test": "`contract > RULE 1`",
+   "result": "PASS"
+  },
+  {
+   "id": "R20",
+   "requirement": "Sin destino implícito en multi-destino",
+   "implementation": "`DESTINATION_ID_REQUIRED` en claim/delivered/haltedDlq/adminResume",
+   "test": "`contract > RULE 2`",
+   "result": "PASS"
+  },
+  {
+   "id": "R21",
+   "requirement": "GC: la secuencia fallida está resuelta y no ancla la retención, pero el backlog posterior de un destino en FAILED_PERMANENT se conserva durable hasta retry/skip; los demás Hubs no quedan retenidos",
+   "implementation": "frontera de retención por destino, `FAILED_PERMANENT` resuelto",
+   "test": "contract > 11b + R21 backlog durable",
+   "result": "PASS"
+  },
+  {
+   "id": "F-01",
+   "requirement": "401/403 son FAILED_PERMANENT siempre, con precedencia sobre cualquier pista de reintento del body",
+   "implementation": "src/consumer.js::classify (orden de evaluación)",
+   "test": "audit_remediation > F-01 (4)",
+   "result": "PASS"
+  },
+  {
+   "id": "F-02",
+   "requirement": "Ciclo de vida disable/re-enable: sin entregas en limbo, sin WAIT eterno, sin redispatch ni retención",
+   "implementation": "Sequencer as the authority: _isDisabled + destinationDisabled at dispatch AND at claim; nothing published to a disabled destination queue; consumer check kept as secondary defence",
+   "test": "audit_remediation > F-02 (4) + F-02 R2 (4)",
+   "result": "PASS"
+  },
+  {
+   "id": "F-03",
+   "requirement": "Validación de DESTINATIONS (finito, no negativo, rangos operativos), fallo cerrado",
+   "implementation": "src/destinations.js::LIMITS/num/retryPolicy",
+   "test": "audit_remediation > F-03 (3)",
+   "result": "PASS"
+  },
+  {
+   "id": "F-04",
+   "requirement": "Identidad de release: lockfile raíz 1.3.0; baseline de contrato R8.2.3.3 y Hub operativo R8.4 REV8",
+   "implementation": "package-lock.json, VERSION, README.md",
+   "test": "verificación documental",
+   "result": "PASS"
+  },
+  {
+   "id": "F-05",
+   "requirement": "Rollback que no dependa primariamente del dedupe del Hub para filas legacy migradas",
+   "implementation": "sequencer._mirrorLegacy + rollbackReadiness() + GET /rollback-readiness",
+   "test": "audit_remediation > F-05 (3)",
+   "result": "PASS"
+  },
+  {
+   "id": "F-02B",
+   "requirement": "Un destino deshabilitado no fija la frontera global de GC; su cabeza avanza causalmente sobre secuencias que nunca se le debieron",
+   "implementation": "sequencer._reconcileHeads() en stats(), _gc() y tras cada pasada de despacho; _advance nunca sobrepasa pendientes, FAILED_PERMANENT ni halts",
+   "test": "audit_remediation > F-02B R3 (3)",
+   "result": "PASS"
+  },
+  {
+   "id": "F-03B",
+   "requirement": "`enabled`, si está presente, debe ser booleano estricto; cualquier otro tipo es configuración inválida con fallo cerrado 503",
+   "implementation": "src/destinations.js::parseConfigured (DESTINATION_ENABLED_NOT_BOOLEAN)",
+   "test": "audit_remediation > F-03B R3 (3)",
+   "result": "PASS"
+  },
+  {
+   "id": "F-04B",
+   "requirement": "El camino legacy de un solo destino solo aplica con DESTINATIONS AUSENTE; presente pero vacío es inválido y falla cerrado",
+   "implementation": "src/destinations.js::allDestinations (DESTINATIONS_PRESENT_BUT_EMPTY)",
+   "test": "audit_remediation > F-04 R4 (3)",
+   "result": "PASS"
+  },
+  {
+   "id": "F-05B",
+   "requirement": "Un timeout_ms (o campo de retry) PRESENTE se valida; 0, null, false y \"\" son inválidos, no el default",
+   "implementation": "src/destinations.js::present/timeoutFor/field",
+   "test": "audit_remediation > F-05 R4 (3)",
+   "result": "PASS"
+  }
+ ],
+ "revision": "R4 · re-audit remediation of the V1.3.0 candidate"
+}

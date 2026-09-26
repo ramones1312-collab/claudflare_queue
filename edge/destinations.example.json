@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "KAWA VECTOR · Edge Signal Buffer V1.3.0 · DESTINATIONS — EXAMPLE, NO SECRETS.",
+    "This is the value of the non-secret DESTINATIONS var (a JSON array, quoted in wrangler.toml).",
+    "Credentials NEVER appear here: each destination reads DEST_<ID>_WEBHOOK_URL as its own secret,",
+    "bound only in its own consumer Worker. Adding HUB_C is: one entry here, one queue producer in",
+    "the ingress config, one queue, one consumer deployment. No code change.",
+    "Per destination, the bindings are: DEST_<ID>_QUEUE, DEST_<ID>_DLQ, DEST_<ID>_WEBHOOK_URL,",
+    "DEST_<ID>_FETCHER (optional service binding) and DEST_<ID>_TIMEOUT_MS (optional override).",
+    "An id must match ^[A-Z][A-Z0-9_]{0,31}$ and be unique. enabled:false receives nothing.",
+    "A destination added later gets NO history: it starts with the next accepted alert."
+  ],
+  "destinations": [
+    { "id": "HUB_A", "enabled": true, "timeout_ms": 10000,
+      "retry": { "base_delay_s": 5, "backpressure_delay_s": 30, "max_delay_s": 900 } },
+    { "id": "HUB_B", "enabled": true, "timeout_ms": 10000,
+      "retry": { "base_delay_s": 5, "backpressure_delay_s": 30, "max_delay_s": 900 } },
+    { "id": "HUB_C", "enabled": false, "timeout_ms": 10000 }
+  ]
+}

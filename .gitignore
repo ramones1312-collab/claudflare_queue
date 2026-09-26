@@ -1,0 +1,10 @@
+node_modules/
+edge/node_modules/
+.wrangler/
+**/.wrangler/
+state/
+secrets/*
+!secrets/README.md
+build/
+dist/
+*.log

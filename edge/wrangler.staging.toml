@@ -1,0 +1,46 @@
+# STAGING ONLY. Every resource name carries the -stg suffix so nothing here can touch a PROD
+# queue, Worker or Durable Object namespace. The DO namespace is derived from the Worker name, so
+# kawa-edge-ingress-stg has its own storage, separate from production.
+#
+# KAWA VECTOR · Edge Signal Buffer V1.3.0 — INGRESS + SEQUENCER (multi-destination)
+#
+# The sequencer persists each alert ONCE and creates one delivery per ENABLED destination, each on
+# its OWN queue. Adding HUB_C later means: add it to DESTINATIONS, add its queue producer below,
+# create the queue, deploy its consumer. No code change anywhere.
+#
+# Durable Object configured with the DECLARATIVE `exports` form, verified against the schema of the
+# installed wrangler 4.132.0, which states that `exports` is "mutually exclusive with `migrations`".
+# No `migrations` block is used anywhere in this project.
+
+name = "kawa-edge-ingress-stg"
+main = "src/ingress-entry.js"
+compatibility_date = "2024-12-18"
+
+[exports.EdgeSequencer]
+type = "durable-object"
+storage = "sqlite"
+
+[[durable_objects.bindings]]
+name = "SEQUENCER"
+class_name = "EdgeSequencer"
+
+# --- destinations -------------------------------------------------------------------------------
+# NON-SECRET configuration only: ids, enablement, timeouts. Credentials are never listed here; each
+# destination reads its own DEST_<ID>_WEBHOOK_URL secret inside ITS OWN consumer Worker.
+[vars]
+DESTINATIONS = '[{"id":"HUB_A","enabled":true,"timeout_ms":10000},{"id":"HUB_B","enabled":true,"timeout_ms":10000}]'
+
+# One queue per destination: a stuck or permanently failed Hub creates no head-of-line blocking for
+# the others, and each queue keeps its own retries and its own causal order.
+[[queues.producers]]
+queue = "kawa-signal-buffer-hub-a-stg"
+binding = "DEST_HUB_A_QUEUE"
+
+[[queues.producers]]
+queue = "kawa-signal-buffer-hub-b-stg"
+binding = "DEST_HUB_B_QUEUE"
+
+# Secrets are DECLARED, never given a value here. Declaring them as `vars` would create a plaintext
+# variable with the same name that shadows the real secret.
+[secrets]
+required = ["WEBHOOK_PATH_TOKEN", "HALT_NOTIFY_URL"]

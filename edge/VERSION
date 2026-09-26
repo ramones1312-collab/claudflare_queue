@@ -1,0 +1,66 @@
+KAWA VECTOR · EDGE SIGNAL BUFFER
+identity: edge-signal-buffer-v1.3.0-staging
+revision: R4 · re-audit remediation of the V1.3.0 candidate (2026-09-22); identity unchanged
+changes_in_r4:
+  - F-04 P1: the legacy single-destination path applies ONLY when DESTINATIONS is absent. Present
+    but empty ("", whitespace, null) is invalid configuration and acceptance fails closed with 503
+  - F-05 P2: a PRESENT timeout_ms (and retry field) is validated instead of falling through to the
+    default: 0, null, false and "" are invalid, not 10000 by omission
+  - R21: GC contract stated precisely -- the failed sequence is resolved, but the backlog a halted
+    destination is still owed stays durable until retry/skip; other Hubs keep operating
+changes_in_r3:
+  - F-02B P1: a disabled destination no longer pins global GC. Heads are reconciled for every known
+    destination (never past a real pending delivery, a FAILED_PERMANENT or a halt), so its retention
+    frontier advances over sequences it was never owed
+  - F-03B P1: `enabled`, when present, must be a strict boolean. "false", 0, null and any other type
+    are invalid configuration and acceptance fails closed with 503
+  - docs: `outbox` described precisely (evidence preserved; only the resolution state of a migrated
+    legacy row is mirrored, per F-05); R8.2.3.3 is the CONTRACT BASELINE, the operating Hub is R8.4 REV8
+changes_in_r2:
+  - F-02 (re-audit): enabled/disabled authority moved to the Sequencer. A disabled destination's
+    pending deliveries are resolved at dispatch AND at claim time, and nothing is published to its
+    queue; the consumer-side check remains a secondary defence. No dependency on config sync
+    between Workers.
+  - docs: disabling a destination no longer implies redeploying its consumer; the rollback section
+    now states that resolutions of migrated legacy rows are mirrored into `outbox` (F-05)
+component: cloudflare-edge-buffer
+contract_baseline: KAWA VECTOR EXECUTION PLATFORM V4.0 R8.2.3.3 (webhook contract the causal matrix
+  was validated against; frozen, unmodified)
+current_operating_hub: KAWA VECTOR EXECUTION PLATFORM V4.0 R8.4 REV8 (unmodified by this artifact)
+status: STAGING CANDIDATE — NOT FOR PRODUCTION
+workerd_validation: 90/90 tests PASS across 9 isolated runtimes
+  (41 legacy unchanged + 1 legacy updated by the 401/403 policy change + 48 new)
+causal_matrix: 6 violations without sequencer -> 0 differences with sequencer
+lineage: V1.3.0 <- V1.2.3 STAGING FROZEN (sha256 b8eb641ab49f6af6eba1612eb2c140ca28a7a793755031634349f34da64c74e1)
+changes_from_1.3.0 (independent audit remediation: FAIL -> BLOCK STAGING):
+  - F-01 P1: 401/403 take precedence over any retry hint in the body; always FAILED_PERMANENT
+  - F-02 P1: disable/re-enable lifecycle; a disabled destination's delivery is resolved durably
+    (DISABLED_SKIPPED, audited) instead of acked into limbo; no eternal WAIT, no retention
+  - F-03 P2: DESTINATIONS numeric validation (finite, non-negative, operational ranges); fails
+    closed at config load / acceptance instead of degrading into an endless retry
+  - F-04 P2: package-lock root version 1.3.0; R8.2.3.3 declared as contract baseline and R8.4 REV8
+    as the current operating Hub
+  - F-05: rollback mirror of migrated legacy rows into `outbox` + rollbackReadiness() gate, so a
+    rollback never depends primarily on Hub-side dedupe
+changes_from_1.2.3:
+  - MULTI-DESTINATION DURABLE FAN-OUT: one alert persisted once, delivered independently to N Hubs
+  - storage schema 2: signals + deliveries(edge_seq, destination_id); in-place migration from outbox
+  - per destination: own head, own halt, own lease, own queue, own DLQ, own credential
+  - 4xx policy: 401/403 and other permanent 4xx -> FAILED_PERMANENT for THAT destination only;
+    429 and explicitly transient 4xx, 5xx, network and timeout -> retry with backoff
+  - a destination added later receives no history; no implicit destination once several exist
+previous_changes_from_1.2.2:
+  - package sanitised: non-STAGING wrangler.toml and wrangler.consumer.toml removed from the
+    artifact (a root config is auto-selected by `wrangler deploy` without --config, which was an
+    accidental route out of STAGING isolation)
+  - obsolete README replaced by a STAGING-only one; STAGING runbook included in the package
+  - no code change: every source file is byte-identical to V1.2.2
+previous_changes_from_1.2.1:
+  - staging receiver: observation ledger moved to a SQLite Durable Object (evidence now
+    survives isolate eviction); authenticated /control surface for scripted behaviour
+  - staging consumer: KAWA_FETCHER Service Binding hard-locks delivery to the staging
+    receiver; KAWA_WEBHOOK_URL is no longer a secret and its host is never dialled
+  - adminResume(): halted_seq is cleared ONLY when the current halt is resolved
+  - admin worker: `force` rejected over HTTP (FORCE_NOT_ALLOWED_OVER_HTTP)
+unchanged_from_1.2.1: sequencer ordering, transactional outbox, release gate, ACK contract,
+  DLQ contract, producer

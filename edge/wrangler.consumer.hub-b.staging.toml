@@ -1,0 +1,49 @@
+# STAGING ONLY · KAWA VECTOR · Edge Signal Buffer V1.3.0 — DELIVERY CONSUMER FOR **HUB_B**
+#
+# ONE consumer deployment PER destination. Generated from the HUB_A template: only the id, the queue
+# names, the service binding and the secret name differ. Nothing is shared between them.
+#
+#   - CONSUMER_DESTINATION_ID pins this deployment. An envelope for another destination is refused,
+#     never delivered with the wrong credential.
+#   - DEST_HUB_B_WEBHOOK_URL is HUB_B's own secret. HUB_B's secret is not bound here at all, so it
+#     is structurally unreachable from this Worker.
+#   - DEST_HUB_B_DLQ records HUB_B's permanent failures only.
+
+name = "kawa-edge-delivery-hub-b-stg"
+main = "src/consumer-entry.js"
+compatibility_date = "2024-12-18"
+
+# Binds the sequencer defined in the ingress Worker. The class is declared there, not here.
+[[durable_objects.bindings]]
+name = "SEQUENCER"
+class_name = "EdgeSequencer"
+script_name = "kawa-edge-ingress-stg"
+
+[[queues.consumers]]
+queue = "kawa-signal-buffer-hub-b-stg"
+max_batch_size = 1
+max_batch_timeout = 0
+# High, because a message waiting its turn behind an earlier sequence retries legitimately and must
+# not be mistaken for a failure. Transport exhaustion is NOT a permanent failure: if a copy is
+# discarded, the DO's redispatch lease republishes the same edge_seq for this destination.
+max_retries = 100
+# Deliberately NO dead_letter_queue here: FAILED_PERMANENT means one thing only — a permanent 4xx
+# (401/403 included) from THIS Hub, written by the consumer and followed by a durable state change.
+max_concurrency = 1
+
+[[queues.producers]]
+queue = "kawa-signal-buffer-hub-b-dlq-stg"
+binding = "DEST_HUB_B_DLQ"
+
+# STAGING HARD-LOCK. Delivery is bound to the staging receiver Worker, so it is structurally
+# impossible for this consumer to reach any other host — including a production one.
+[[services]]
+binding = "DEST_HUB_B_FETCHER"
+service = "kawa-staging-receiver"
+
+[vars]
+CONSUMER_DESTINATION_ID = "HUB_B"
+DESTINATIONS = '[{"id":"HUB_A","enabled":true,"timeout_ms":10000},{"id":"HUB_B","enabled":true,"timeout_ms":10000}]'
+# NOT a secret in STAGING: the Service Binding decides the destination and this host is never
+# dialled. In PRODUCTION this line is removed and the value is set as a secret instead.
+DEST_HUB_B_WEBHOOK_URL = "https://staging-receiver.invalid/webhook/hub-b-stg"

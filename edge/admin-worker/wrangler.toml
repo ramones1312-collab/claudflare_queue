@@ -1,0 +1,13 @@
+# STAGING ADMIN · temporary surface for gates I and J. Delete after the STAGING gate closes.
+# Never deploy an equivalent of this Worker to production.
+name = "kawa-edge-admin-stg"
+main = "src/index.js"
+compatibility_date = "2024-12-18"
+
+[[durable_objects.bindings]]
+name = "SEQUENCER"
+class_name = "EdgeSequencer"
+script_name = "kawa-edge-ingress-stg"
+
+[secrets]
+required = ["ADMIN_TOKEN"]
