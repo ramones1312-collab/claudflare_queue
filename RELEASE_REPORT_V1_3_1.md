@@ -1,13 +1,13 @@
-# RELEASE REPORT · KAWA Edge Signal Buffer V1.3.1 R1 (NAS turnkey)
+# RELEASE REPORT · KAWA Edge Signal Buffer V1.3.1 R2 (NAS turnkey)
 
 | Campo | Valor |
 |---|---|
-| Identidad | `edge-signal-buffer-v1.3.1-nas` · revisión **R1** · 2026-09-26 |
+| Identidad | `edge-signal-buffer-v1.3.1-nas` · revisión **R2** (remediación de la auditoría externa de R1, veredicto FAIL) · 2026-09-26 |
 | Linaje | V1.3.1 ← V1.3.0 R4 CANDIDATE (`1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867`) |
 | Código de producción del Edge | **byte-idéntico a R4** (`git diff 7d8dab5 -- edge/src edge/staging-receiver edge/admin-worker` vacío) |
-| ZIP | `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R1_2026-09-26.zip` — SHA-256 en el `.sha256` adjunto (un fichero no puede contener su propio hash) |
-| Manifest | `MANIFEST_SHA256_V1_3_1.json` (autohash excluido, como R4); su SHA-256 va en el `.sha256` del ZIP y en el mensaje de entrega |
-| Evidencia de tests | `TEST_EVIDENCE_V1_3_1.json`, ligada al hash del árbol de entrada de los tests |
+| ZIP | `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip` — SHA-256 en la **primera línea** del `.sha256` adjunto (un fichero no puede contener su propio hash) |
+| Manifest | `MANIFEST_SHA256_V1_3_1.json` (autohash excluido, como R4); su SHA-256 va en la **segunda línea** del `.sha256` (R2, F-20) y `verify-release` la comprueba |
+| Evidencia de tests | `TEST_EVIDENCE_V1_3_1.json`, ligada al hash del árbol de entrada de los tests y **firmada** (HMAC) por la instalación que la produjo |
 | Estado | **STAGING-READY.** **CUTOVER PROD BLOQUEADO** por B-1 y B-2 (§6) |
 
 ## 1. Qué se entrega
@@ -25,7 +25,7 @@
 
 El harness no era hermético: ~80 notificaciones de halt por ejecución salían del runtime como búsquedas DNS
 reales de `halt-notify.test`; con el DNS del NAS (que no responde) el **único** runtime workerd compartido se
-bloqueaba y tests ajenos agotaban 5000 ms. Reproducido exactamente (50/90 con `--dns 192.0.2.1`), probado
+bloqueaba y tests ajenos agotaban 5000 ms. Reproducido exactamente (50/90 con `--dns 192.0.2.1`; el auditor externo, de forma independiente, 60/90), probado
 causalmente (reorder solo = PASS; reorder + dlq = FAIL) y corregido en el harness sin tocar producción ni
 timeouts. Detalle: `ROOT_CAUSE_NAS_53_90.md`.
 
@@ -33,26 +33,26 @@ timeouts. Detalle: `ROOT_CAUSE_NAS_53_90.md`.
 
 | Suite | Resultado |
 |---|---|
-| Edge (workerd) | **95/95 PASS** — 90 de R4 sin modificar + 2 guardián + 3 consumer con su entrada |
-| Deployer | **46/46 PASS** — 27 unit (incl. runner de gates), 3 equivalencia semántica con R4, 16 E2E del instalador contra API simulado |
+| Edge (workerd) | **95/95 PASS**, 11/11 ficheros, **exit 0** — 90 de R4 sin modificar + 2 guardián + 3 consumer con su entrada |
+| Deployer | **75/75 PASS**, exit 0 — 50 unit (incl. veredictos con vitest real, integridad del ZIP, lanzador, runner de gates), 6 equivalencia R4 (config completo), 19 E2E del instalador contra API simulado |
 | Ensayo local de gates STAGING | **PASS** — 13 ejecutados, 5 `CLOUD_ONLY` (justificado en TEST_REPORT §5) |
 | Gate físico sobre el ZIP final | ver §4 |
 
 ## 4. Tiempos medidos (entorno NAS-equivalente: contenedor de la imagen, 4 vCPU, rootfs read-only, uid no-root)
 
-| Paso | Antes (R4, entorno del NAS) | Ahora (V1.3.1 R1) |
+| Paso | Antes (R4, entorno del NAS) | V1.3.1 R2 (medido en esta revisión) |
 |---|---|---|
-| Instalación limpia de dependencias (imagen sin caché: `npm ci` + export) | `npm ci` en bind mount del NAS (no medido por fase) | **28.4 s** (de ellos `npm ci` 8.6 s) |
-| Reconstrucción tras un cambio solo de código | reinstalar | **1.4 s** (capa de dependencias en caché) |
-| Fast preflight (`verify-fast`: manifest, toolchain, config, aislamiento, 8 bundles offline, 30 unit) | — | **11.7 s** |
-| Targeted (`test-targeted`, 1 fichero de test del Edge) | suite completa | **2.0 s** |
+| Instalación limpia de dependencias (imagen sin caché: `npm ci` + export) | `npm ci` en bind mount del NAS (no medido por fase) | **28.4 s** medido en R1 (de ellos `npm ci` 8.6 s); capa de dependencias sin cambios en R2 |
+| Reconstrucción tras un cambio solo de código | reinstalar | segundos (capa de dependencias en caché; 28 s la primera construcción R2 en este host) |
+| Fast preflight (`verify-fast`: manifest, toolchain, config, aislamiento, 8 bundles offline, 56 unit) | — | **14.0 s** |
+| Targeted (`test-targeted`, 1 fichero de test del Edge) | suite completa | **2.2 s** |
 | Targeted (cambio solo de documentación) | suite completa | **0.0 s** (nada que ejecutar) |
-| Full release gate (`test-full`: Edge 95 + deployer 46) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | **67.2 s PASS** (Edge 7.6 s en paralelo por fichero; deployer 59.6 s en paralelo por fichero, antes 135 s en serie) |
-| Empaquetado (`package`, sin re-ejecutar la suite) | 15–20 min (incluía repetir la suite) | **0.12 s** (evidencia de `test-full` reutilizada por hash; la suite **no** se repite) |
-| Verificación del ZIP (`verify-release`) | — | **0.09 s** (SHA-256, manifest, vínculo de evidencia, ficheros prohibidos, runbook único) |
+| Full release gate (`test-full`: Edge 95 + deployer 75) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | **122.3 s PASS** (Edge 7.9 s en paralelo por fichero; deployer 114.4 s en paralelo por fichero; R1 eran 67.9 s con 46 tests: los 29 nuevos, sobre todo los E2E de la puerta PROD, añaden ~55 s) |
+| Empaquetado (`package`, sin re-ejecutar la suite) | 15–20 min (incluía repetir la suite) | < 1 s (evidencia **firmada** de `test-full` reutilizada por hash; la suite **no** se repite) |
+| Verificación del ZIP (`verify-release`) | — | < 1 s (hash esperado obligatorio, entradas crudas del ZIP, manifest y su hash publicado, vínculo de evidencia, ficheros prohibidos, runbook único) |
 | Install STAGING hasta gates (preflight + 6 bundles + 6 despliegues, contra API simulado) | manual, Worker a Worker | **13.6 s**; re-ejecución idempotente **7.0 s** |
-| Gates STAGING | — | ensayo local **198 s** (13 gates); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
-| Gate físico sobre el ZIP final (extraer → imagen → verify-fast → test-full → rehearse) | — | **281 s PASS**: `verify-zip` → `refresh-context` → imagen desde la carpeta extraída → `verify-fast` 11.4 s (manifest verificado **dentro** de la imagen, 92 ficheros) → `test-full` 67.9 s (95/95 + 46/46) → `rehearse` 197.7 s |
+| Gates STAGING | — | ensayo local **203.9 s** (13 gates + 5 CLOUD_ONLY); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
+| Gate físico sobre el ZIP final (extraer → imagen → verify-fast → test-full → rehearse) | — | se ejecuta **después** de empaquetar, sobre el ZIP ya cerrado; su resultado va en el mensaje de entrega y en `delivery/` (un fichero dentro del ZIP no puede certificar el ZIP que lo contiene). R1: 281 s PASS |
 
 Ningún paso supera los objetivos (empaquetado ≪ 5 min; full test ≪ 10 min). El flujo normal nunca ejecuta dos
 suites completas seguidas: `package` reutiliza la evidencia de `test-full` si el hash del árbol de entrada
@@ -102,6 +102,23 @@ una actualización en el NAS. Corrección: el lanzador compara el manifest del p
 imagen y, si difiere, refresca las marcas de tiempo antes de construir (`./kawa-edge refresh-context` para el
 camino manual). Re-probado en la misma ruta: PASS.
 
+## 5-ter. Auditoría externa de R1 (FAIL) y respuesta R2
+
+Un auditor externo independiente confirmó que el código del Edge es el de R4 y la causa raíz del 53/90, y dio
+**FAIL** por defectos del mecanismo que rodea al Edge: 1 P0 (la puerta `test-full` podía declarar PASS con un
+fichero de test que no cargaba), 5 P1 (lanzador con `sudo` que seguía enlaces simbólicos; `add-hub --env prod`
+sin STAGING PASS; evidencia sin firma con su propia lista de gates; binding incompleto; `verify-release` ciego a
+secretos dentro del ZIP), 12 P2 y 6 P3. **R2 los corrige todos** salvo los que son riesgos heredados de R4 o
+decisiones del propietario, que quedan **declarados** (F-10 reinicio del Sequencer al redesplegar el ingress, con
+confirmación tecleada; F-14 ventana de doble ruta; F-15 B-2 depende de B-1; H-16 PROD sin ejercitar antes de la
+primera señal; OBS-1 `_notifyHalt` sin timeout, en `edge/src` congelado). Tabla hallazgo → corrección → test:
+`AUDIT_RESPONSE_R2.md` (se entrega junto al ZIP).
+
+Al ejecutar el pipeline R2 dentro del contenedor aparecieron tres defectos más, corregidos antes de empaquetar:
+`test-full` resolvía rutas de un workspace ya borrado (ENOENT tras 95/95: fallo cerrado, nunca PASS falso); los
+tests del runner escribían evidencia y la clave de firma en el `state/` real; y `verify-zip` leía mal el nuevo
+`.sha256` de dos líneas (habría dado FAIL con un ZIP correcto). Cada uno tiene test.
+
 ## 6. Bloqueos (declarados, no resueltos en silencio)
 
 **B-1 · Superficie admin PROD.** R4 solo tiene retry/skip/diagnóstico/rollback-readiness en el Worker admin de
@@ -113,7 +130,9 @@ admin tras Cloudflare Access. Requiere decisión del owner y una revisión nueva
 
 **B-2 · Validación Edge → HUB_A no-trading.** Todo POST a `/webhook/<secret>` es una señal. No se ha aportado un
 probe no-trading del ingress de R8.4 REV8 ni la garantía escrita de deduplicación por `signal_id` para un
-cuerpo ya procesado. Además, solo esa prueba demuestra que la seguridad de la zona `integrademia.com` (WAF,
+cuerpo ya procesado. El contrato pedido al Hub exige además respuesta **2xx con `code: DUPLICATE`**: un
+DUPLICATE no-2xx sería `FAILED_PERMANENT` y, sin B-1, detendría la línea HUB_A PROD sin vía de recuperación;
+por eso **B-2 solo se aborda después de B-1** (F-15). Además, solo esa prueba demuestra que la seguridad de la zona `integrademia.com` (WAF,
 Bot Fight Mode, Access) no desafía las peticiones de un Worker. `hub-check` no envía nada.
 
 Mientras B-1 y B-2 sigan abiertos: `cutover-check` → BLOCKED, `cutover` se niega, TradingView sigue directo a
