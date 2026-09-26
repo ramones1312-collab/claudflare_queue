@@ -6,10 +6,6 @@
 set -eu
 cd "$(dirname "$0")"
 
-if docker compose version >/dev/null 2>&1; then DC="docker compose"
-elif command -v docker-compose >/dev/null 2>&1; then DC="docker-compose"
-else echo "ERROR: docker compose not found. Install 'Container Manager' from the DSM Package Center." >&2; exit 1; fi
-
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 if [ "${1:-}" = "verify-zip" ]; then
@@ -41,6 +37,10 @@ link=$(find state secrets config -type l -print 2>/dev/null | head -n 1)
 # Created by sudo => root-owned; hand them to the folder owner the container runs as (-h: never a link target).
 find state secrets config -exec chown -h "$KAWA_UID:$KAWA_GID" {} + 2>/dev/null || true
 chmod 700 secrets state 2>/dev/null || true
+
+if docker compose version >/dev/null 2>&1; then DC="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then DC="docker-compose"
+else echo "ERROR: docker compose not found. Install 'Container Manager' from the DSM Package Center." >&2; exit 1; fi
 
 
 # The release ZIP is deterministic: every file carries the same fixed timestamp. Unzipped over an

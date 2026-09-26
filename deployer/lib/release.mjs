@@ -127,7 +127,8 @@ async function runEdgeSuite(files = []) {
   const v = edgeVerdict(res, r.code, expected);
   for (const x of v.reasons) out.fail(`edge suite: ${x}`);
   if (!res) return { ok: false, reasons: v.reasons, pass: 0, fail: 1, ms: r.ms, code: r.code, tail: r.text.slice(-2000) };
-  const rel = (n) => path.relative(fs.realpathSync(EDGE_DIR), fs.realpathSync(n));
+  // vitest reports paths inside the (already removed) workspace: make them relative to it, lexically.
+  const rel = (n) => path.relative(ws, n);
   const byFile = res.testResults.map(t => ({ file: rel(t.name), status: t.status, tests: t.assertionResults.length,
     failed: t.assertionResults.filter(a => a.status !== 'passed').length,
     ms: Math.round(t.endTime - t.startTime) }));

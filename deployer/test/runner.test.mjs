@@ -8,11 +8,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runGates } from '../lib/gates/run.mjs';
-import { createCfApi } from '../lib/cfapi.mjs';
-import { lineSink } from '../lib/wrangler.mjs';
-import { redact, registerSecret } from '../lib/log.mjs';
-import { createMockCloudflare } from './support/mock-cloudflare.mjs';
+
+// Evidence (and its signing key) go to a throw-away state dir, never to the operator's state/.
+process.env.KAWA_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'kawa-runner-state-'));
+const { runGates, CLOUD_GATE_IDS, defineGates } = await import('../lib/gates/run.mjs');
+const { createCfApi } = await import('../lib/cfapi.mjs');
+const { lineSink } = await import('../lib/wrangler.mjs');
+const { redact, registerSecret } = await import('../lib/log.mjs');
+const { createMockCloudflare } = await import('./support/mock-cloudflare.mjs');
 
 const secrets = { WEBHOOK_PATH_TOKEN: 'p'.repeat(20), ADMIN_TOKEN: 'a'.repeat(20), CONTROL_TOKEN: { HUB_A: 'c'.repeat(20), HUB_B: 'd'.repeat(20) } };
 function fakeTarget(kind, { resumeFails = false } = {}) {
@@ -96,7 +99,6 @@ test('a secret split across two output chunks is still redacted as a whole', () 
   assert.equal(lines.join('').includes(secret.slice(0, 10)), false);
 });
 
-import { CLOUD_GATE_IDS, defineGates } from '../lib/gates/run.mjs';
 
 test('E-07 · a run with zero gates is FAIL, never a vacuous PASS', async () => {
   const g = await run(fakeTarget('cloud'), []);

@@ -17,7 +17,9 @@ function sandbox() {
   fs.mkdirSync(path.join(t, 'pkg')); fs.mkdirSync(path.join(t, 'bin')); fs.mkdirSync(path.join(t, 'victims'));
   fs.copyFileSync(path.join(ROOT, 'kawa-edge'), path.join(t, 'pkg', 'kawa-edge'));
   fs.writeFileSync(path.join(t, 'pkg', 'MANIFEST_SHA256_V1_3_1.json'), '{}');
-  fs.writeFileSync(path.join(t, 'bin', 'docker'), '#!/bin/sh\necho "[stub docker] $*" >&2\nexit 0\n', { mode: 0o755 });
+  // Stub `docker` = a link to the system `echo` (it prints its arguments and exits 0). A link, not a script,
+  // because inside the deployer container /tmp is mounted noexec; the link target lives on the rootfs.
+  fs.symlinkSync(fs.existsSync('/bin/echo') ? '/bin/echo' : '/usr/bin/echo', path.join(t, 'bin', 'docker'));
   fs.writeFileSync(path.join(t, 'victims', 'file'), 'ORIGINAL');
   return t;
 }
@@ -41,7 +43,7 @@ for (const [where, plant] of [
       const r = run(t, ['help']);
       assert.notEqual(r.status, 0, r.stdout + r.stderr);
       assert.match(r.stderr, /symbolic link/);
-      assert.doesNotMatch(r.stderr, /stub docker/, 'docker must not be reached');
+      assert.doesNotMatch(r.stdout, /compose/, 'docker must not be reached');
       assert.equal(fs.readFileSync(path.join(t, 'victims', 'file'), 'utf8'), 'ORIGINAL');
       const after = fs.statSync(path.join(t, 'victims', 'file'));
       assert.deepEqual([after.uid, after.gid, after.mode], [before.uid, before.gid, before.mode]);
@@ -54,7 +56,7 @@ test('clean folder: the launcher proceeds and writes its stamp as a regular file
   try {
     const r = run(t, ['help']);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /stub docker\] compose run --rm installer help/);
+    assert.match(r.stdout, /compose run --rm installer help/);
     assert.equal(fs.lstatSync(path.join(t, 'pkg', 'state', '.image-manifest')).isFile(), true);
   } finally { fs.rmSync(t, { recursive: true, force: true }); }
 });
