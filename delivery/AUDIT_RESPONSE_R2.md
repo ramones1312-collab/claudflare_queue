@@ -70,7 +70,7 @@ hay que entregarle `KAWA_EDGE_SIGNAL_BUFFER_V1_3_0_R4_CANDIDATE_2026-09-22.zip`
 ## R3 · re-auditoría independiente de R2
 
 Una re-auditoría independiente de R2 (antes de entregarlo) no encontró P0/P1. Dio F-02 y F-04 como PARCIALES por
-dos P2 nuevos y encontró 4 P3 y las tres afirmaciones exageradas corregidas arriba (F-03, F-04, C-09). R2 no se
+dos P2 nuevos y encontró 4 P3 nuevos más uno previo a R2 (N-7), y las tres afirmaciones exageradas corregidas arriba (F-03, F-04, C-09). R2 no se
 entregó; **R3** corrige todo:
 
 | Id | Sev | Hallazgo | Corrección R3 | Test (falla sin la corrección) |

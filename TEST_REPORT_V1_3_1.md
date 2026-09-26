@@ -18,10 +18,10 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 | Edge · guardián de red hermética (nuevo) | 2 | PASS |
 | Edge · consumer con solo su entrada de `DESTINATIONS` (nuevo) | 3 | PASS |
 | **Edge total** | **95** | **95/95 PASS** |
-| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, veredictos de la puerta con **vitest real**, integridad del ZIP, lanzador bajo enlaces simbólicos, runner de gates, backlog, id de despliegue) | 50 | PASS |
+| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, veredictos de la puerta con **vitest real**, integridad del ZIP, lanzador bajo enlaces simbólicos y duros, cobertura del binding, runner de gates, backlog, id de despliegue) | 56 | PASS |
 | Deployer · equivalencia con los TOML de R4: **config completo** de los 6 configs (lector de wrangler) | 6 | PASS |
 | Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 19 | PASS |
-| **Deployer total** | **75** | **75/75 PASS** |
+| **Deployer total** | **81** | **81/81 PASS** |
 | Ensayo local de gates STAGING (Miniflare, bundles exactos) | 13 ejecutados + 5 `CLOUD_ONLY` | PASS |
 | Gate físico sobre el ZIP final (imagen construida desde la carpeta extraída, lanzador `./kawa-edge`, uid 1026:100) | verify-fast + test-full + rehearse | PASS |
 
@@ -42,6 +42,13 @@ de dos líneas), `e2e-prod-gate` (10 evidencias STAGING manipuladas o insuficien
 PROD; `add-hub --env prod` con la misma puerta), `e2e-prod-locks`, `e2e-cutover-rotate` (ruta de éxito del
 cutover), y en `e2e-failclosed` un Worker ajeno oculto del listado (F-08) y un conflicto en una página
 posterior (F-09).
+
+**Nuevos en R3** (re-auditoría independiente de R2; cada uno falla sin su corrección): el lanzador no escribe nada
+como root en `state/` (N-1) ni cambia el dueño de un fichero con enlace duro (N-3); `verify-release` exige el hash
+publicado del manifiesto y rechaza evidencia sin firma donde hay clave, nombres duplicados y bytes fuera del
+directorio central (N-2/N-5); clave de evidencia malformada → fallo cerrado (N-6); destino deshabilitado en STAGING
+→ PROD BLOCKED (N-4); código cambiado tras el STAGING PASS → `add-hub --env prod` BLOCKED (F-03); el binding cambia
+con `Dockerfile`, `cli.mjs`, `edge/package.json`, `config.mjs`, Sequencer y receptor (F-05).
 
 ## 2. La regresión del NAS (53/90), reproducida y cerrada
 
