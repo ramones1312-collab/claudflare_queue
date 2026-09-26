@@ -47,11 +47,11 @@ timeouts. Detalle: `ROOT_CAUSE_NAS_53_90.md`.
 | Fast preflight (`verify-fast`: manifest, toolchain, config, aislamiento, 8 bundles offline, 79 unit) | — | ver gate físico (`delivery/FPC_EVIDENCE/`) |
 | Targeted (`test-targeted`, 1 fichero de test del Edge) | suite completa | **2.2 s** |
 | Targeted (cambio solo de documentación) | suite completa | **0.0 s** (nada que ejecutar) |
-| Full release gate (`test-full`: Edge 95 + deployer 101) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | @@TF@@ |
+| Full release gate (`test-full`: Edge 95 + deployer 101) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | **119.4 s PASS** (Edge 7.6 s en paralelo por fichero; deployer 111.7 s en paralelo por fichero) |
 | Empaquetado (`package`, sin re-ejecutar la suite) | 15–20 min (incluía repetir la suite) | < 1 s (evidencia **firmada** de `test-full` reutilizada por hash; la suite **no** se repite) |
 | Verificación del ZIP (`verify-release`) | — | < 1 s (hash esperado obligatorio, entradas crudas del ZIP, manifest y su hash publicado, vínculo de evidencia, ficheros prohibidos, runbook único) |
 | Install STAGING hasta gates (preflight + 6 bundles + 6 despliegues, contra API simulado) | manual, Worker a Worker | **13.6 s**; re-ejecución idempotente **7.0 s** |
-| Gates STAGING | — | ensayo local @@RH@@ (13 gates + 5 CLOUD_ONLY); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
+| Gates STAGING | — | ensayo local **203.4 s** PASS (13 gates + 5 CLOUD_ONLY); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
 | Gate físico sobre el ZIP final (extraer → imagen → verify-fast → test-full → rehearse) | — | se ejecuta **después** de empaquetar, sobre el ZIP ya cerrado; su resultado va en el mensaje de entrega y en `delivery/` (un fichero dentro del ZIP no puede certificar el ZIP que lo contiene). R1: 281 s PASS |
 
 Ningún paso supera los objetivos (empaquetado ≪ 5 min; full test ≪ 10 min). El flujo normal nunca ejecuta dos
