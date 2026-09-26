@@ -1,0 +1,34 @@
+#!/bin/sh
+# KAWA Edge deployer launcher (Synology NAS / any Docker host).
+#   sudo ./kawa-edge <command> [args]        e.g.  sudo ./kawa-edge install
+# Builds the image on first use (then cached: seconds when nothing changed) and runs one command
+# in a throw-away container. Nothing keeps running afterwards.
+set -eu
+cd "$(dirname "$0")"
+
+if docker compose version >/dev/null 2>&1; then DC="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then DC="docker-compose"
+else echo "ERROR: docker compose not found. Install 'Container Manager' from the DSM Package Center." >&2; exit 1; fi
+
+# Run as the owner of this folder (not root), so state/ is yours and the container needs no privilege.
+KAWA_UID=$(stat -c %u .); KAWA_GID=$(stat -c %g .)
+export KAWA_UID KAWA_GID
+mkdir -p state secrets config
+chmod 700 secrets state 2>/dev/null || true
+
+if [ "${1:-}" = "verify-zip" ]; then
+  # Integrity of the delivered ZIP, on the NAS host, before anything else: ./kawa-edge verify-zip <zip>
+  zip="${2:?usage: ./kawa-edge verify-zip <path/to/KAWA_...zip>}"
+  want=$(cut -d' ' -f1 "$zip.sha256" 2>/dev/null || true)
+  got=$(sha256sum "$zip" | cut -d' ' -f1)
+  echo "sha256 $got"
+  if [ -n "$want" ] && [ "$want" = "$got" ]; then echo "PASS  matches $zip.sha256"; exit 0; fi
+  if [ -z "$want" ]; then echo "compare it with the SHA-256 published with the release"; exit 0; fi
+  echo "FAIL  expected $want" >&2; exit 1
+fi
+
+if ! docker image inspect kawa-edge-deployer:1.3.1-nas-r1 >/dev/null 2>&1; then
+  echo "Building the deployer image (first run only; a few minutes on a NAS)…"
+fi
+$DC build --quiet installer >/dev/null
+exec $DC run --rm installer "$@"

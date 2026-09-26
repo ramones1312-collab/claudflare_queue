@@ -1,0 +1,17 @@
+{
+  "schema": "kawa.edge.nas.config.v1",
+  "cloudflare": {
+    "account_id": "REPLACE_WITH_YOUR_32_HEX_ACCOUNT_ID"
+  },
+  "staging": {
+    "destinations": [
+      { "id": "HUB_A", "enabled": true, "timeout_ms": 10000 },
+      { "id": "HUB_B", "enabled": true, "timeout_ms": 10000 }
+    ]
+  },
+  "prod": {
+    "destinations": [
+      { "id": "HUB_A", "enabled": true, "timeout_ms": 10000, "webhook_host": "vector-hook.integrademia.com" }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+# Never inside the image: secrets, operator state, user config, build output, VCS, local deps.
+**/node_modules
+**/.wrangler
+.git
+.gitignore
+.env
+state
+secrets/*
+!secrets/README.md
+config/kawa-edge.json
+config/*.bak-*
+dist
+build
+*.log
