@@ -32,8 +32,11 @@ function shred(file) {
   fs.rmSync(file, { force: true });
 }
 
+/** Container Manager UI runs allocate a TTY that nobody types into: KAWA_NONINTERACTIVE=1 says so. */
+const interactive = () => process.stdin.isTTY && !process.env.KAWA_NONINTERACTIVE;
+
 export function promptHidden(question) {
-  if (!process.stdin.isTTY) {
+  if (!interactive()) {
     return Promise.reject(new KawaError('NO_TTY', 'cannot prompt for a secret: no interactive terminal',
       'Run through ./kawa-edge (docker compose run allocates a terminal) or use the consume-once secret file described in README_NAS_INSTALL.md.'));
   }
@@ -45,7 +48,7 @@ export function promptHidden(question) {
 }
 
 export function promptLine(question) {
-  if (!process.stdin.isTTY) return Promise.resolve('');
+  if (!interactive()) return Promise.resolve('');
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
     rl.question(question, (a) => { rl.close(); resolve(a.trim()); });

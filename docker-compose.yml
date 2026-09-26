@@ -30,6 +30,9 @@ services:
       HOME: /tmp/home
       KAWA_RUNTIME: /run/kawa
       KAWA_BUILD: /tmp/kawa-build
+      # Set to 1 in .env when starting from the Container Manager UI (no keyboard): optional prompts
+      # are skipped and mandatory ones fail with NO_TTY instead of waiting forever.
+      KAWA_NONINTERACTIVE: ${KAWA_NONINTERACTIVE:-}
     tmpfs:
       # Temporary secret files live here for seconds and are shredded; RAM only, never on disk.
       - /run/kawa:uid=${KAWA_UID:-1000},gid=${KAWA_GID:-1000},mode=0700,size=16m

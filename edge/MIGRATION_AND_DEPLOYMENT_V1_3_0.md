@@ -4,6 +4,12 @@
 auditoría independiente lo apruebe. V1.2.3 no se sobrescribe: sigue siendo un artefacto válido y el
 camino de rollback.
 
+> **V1.3.1 · nota de uso.** Este documento sigue siendo la **autoridad de arquitectura** (migración,
+> orden de despliegue, alta de destinos, contrato de rollback). Los comandos `wrangler …` de §3–§4 ya no se
+> ejecutan a mano: los ejecuta el instalador (`../RUNBOOK_VIGENTE.md`) sobre configs **generados** con
+> `--config` explícito; los ficheros `wrangler.*.toml` citados aquí ya no están en el paquete. En PROD, los
+> pasos de §6 que usan `GET /rollback-readiness`, `/retry` y `/skip` dependen del bloqueo **B-1**.
+
 ---
 
 ## 1. Qué cambia en la infraestructura
