@@ -30,8 +30,29 @@ if [ "${1:-}" = "verify-zip" ]; then
   echo "FAIL  expected $want" >&2; exit 1
 fi
 
-if ! docker image inspect kawa-edge-deployer:1.3.1-nas-r1 >/dev/null 2>&1; then
-  echo "Building the deployer image (first run only; a few minutes on a NAS)…"
+# The release ZIP is deterministic: every file carries the same fixed timestamp. Unzipped over an
+# older release, a changed file of equal size looks unchanged to BuildKit's incremental context sync
+# (size + mtime), and the image would keep the old bytes (the manifest check then refuses to run).
+# So whenever the package manifest differs from the one the image was built from, refresh mtimes.
+refresh_context() {
+  cur=$(sha256sum MANIFEST_SHA256_V1_3_1.json 2>/dev/null | cut -d' ' -f1)
+  if [ "$cur" != "$(cat state/.image-manifest 2>/dev/null)" ]; then
+    find . -path ./state -prune -o -path ./secrets -prune -o -type f -exec touch {} +
+    FORCE_BUILD=1
+  fi
+}
+FORCE_BUILD=0
+refresh_context
+if [ "${1:-}" = "refresh-context" ]; then echo "context refreshed (rebuild needed: $FORCE_BUILD)"; exit 0; fi
+
+# KAWA_SKIP_BUILD=1: use an image you built yourself (e.g. behind a TLS-inspecting proxy, see README).
+if [ "${KAWA_SKIP_BUILD:-}" != "1" ]; then
+  if ! docker image inspect kawa-edge-deployer:1.3.1-nas-r1 >/dev/null 2>&1; then
+    echo "Building the deployer image (first run only; a few minutes on a NAS)…"
+  fi
+  if [ -n "${HTTPS_PROXY:-}" ]; then $DC build --quiet --build-arg HTTPS_PROXY="$HTTPS_PROXY" installer >/dev/null
+  else $DC build --quiet installer >/dev/null; fi
 fi
-$DC build --quiet installer >/dev/null
+sha256sum MANIFEST_SHA256_V1_3_1.json 2>/dev/null | cut -d' ' -f1 > state/.image-manifest || true
+chown "$KAWA_UID:$KAWA_GID" state/.image-manifest 2>/dev/null || true
 exec $DC run --rm installer "$@"

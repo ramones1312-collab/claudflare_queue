@@ -23,6 +23,7 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 | Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 16 | PASS |
 | **Deployer total** | **46** | **46/46 PASS** |
 | Ensayo local de gates STAGING (Miniflare, bundles exactos) | 13 ejecutados + 5 `CLOUD_ONLY` | PASS |
+| Gate físico sobre el ZIP final (imagen construida desde la carpeta extraída, lanzador `./kawa-edge`, uid 1026:100) | verify-fast + test-full + rehearse | PASS |
 
 **Ningún test de R4 se modificó, se saltó ni se relajó.** Ningún timeout se aumentó.
 

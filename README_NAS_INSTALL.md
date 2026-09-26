@@ -93,11 +93,14 @@ Solo para `install`/`gates`/`status` (los pasos PROD piden datos por teclado y r
 ## Detrás de un proxy con inspección TLS (raro en casa)
 
 ```sh
+sudo ./kawa-edge refresh-context          # tras descomprimir una versión nueva sobre la anterior
 sudo KAWA_UID=$(stat -c %u .) KAWA_GID=$(stat -c %g .) docker compose build \
      --build-arg HTTPS_PROXY=http://proxy:3128 --secret id=npm_ca,src=/ruta/ca-del-proxy.pem
 ```
 
-La CA solo se usa durante `npm ci`; no queda en la imagen.
+La CA solo se usa durante `npm ci`; no queda en la imagen. Después usa el lanzador sin reconstruir:
+`sudo KAWA_SKIP_BUILD=1 ./kawa-edge install`. (Si el proxy no inspecciona TLS, basta con exportar
+`HTTPS_PROXY`: el lanzador lo pasa a la construcción.)
 
 ## Si algo falla
 

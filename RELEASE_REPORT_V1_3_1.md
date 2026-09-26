@@ -48,11 +48,11 @@ timeouts. Detalle: `ROOT_CAUSE_NAS_53_90.md`.
 | Targeted (`test-targeted`, 1 fichero de test del Edge) | suite completa | **2.0 s** |
 | Targeted (cambio solo de documentación) | suite completa | **0.0 s** (nada que ejecutar) |
 | Full release gate (`test-full`: Edge 95 + deployer 46) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | **67.2 s PASS** (Edge 7.6 s en paralelo por fichero; deployer 59.6 s en paralelo por fichero, antes 135 s en serie) |
-| Empaquetado (`package`, sin re-ejecutar la suite) | 15–20 min (incluía repetir la suite) | __PKG__ |
-| Verificación del ZIP (`verify-release`) | — | __VR__ |
+| Empaquetado (`package`, sin re-ejecutar la suite) | 15–20 min (incluía repetir la suite) | **0.12 s** (evidencia de `test-full` reutilizada por hash; la suite **no** se repite) |
+| Verificación del ZIP (`verify-release`) | — | **0.09 s** (SHA-256, manifest, vínculo de evidencia, ficheros prohibidos, runbook único) |
 | Install STAGING hasta gates (preflight + 6 bundles + 6 despliegues, contra API simulado) | manual, Worker a Worker | **13.6 s**; re-ejecución idempotente **7.0 s** |
 | Gates STAGING | — | ensayo local **198 s** (13 gates); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
-| Gate físico sobre el ZIP final (extraer → imagen → verify-fast → test-full → rehearse) | — | __PHYS__ |
+| Gate físico sobre el ZIP final (extraer → imagen → verify-fast → test-full → rehearse) | — | **281 s PASS**: `verify-zip` → `refresh-context` → imagen desde la carpeta extraída → `verify-fast` 11.4 s (manifest verificado **dentro** de la imagen, 92 ficheros) → `test-full` 67.9 s (95/95 + 46/46) → `rehearse` 197.7 s |
 
 Ningún paso supera los objetivos (empaquetado ≪ 5 min; full test ≪ 10 min). El flujo normal nunca ejecuta dos
 suites completas seguidas: `package` reutiliza la evidencia de `test-full` si el hash del árbol de entrada
@@ -91,6 +91,16 @@ carrera Ctrl-C/pausa, `chown -R`, redacción de comentarios exagerados). **Todos
 partido entre dos trozos de salida). Matiz aceptado y documentado: el almacén de huellas HMAC de secretos PROD
 guarda la clave junto a las huellas en `state/`; su protección descansa en la entropía del secreto del webhook
 (≥ 16 caracteres exigidos).
+
+## 5-bis. Hallazgo del gate físico (corregido)
+
+Al descomprimir un ZIP nuevo **sobre** uno anterior en la misma carpeta, la imagen quedó con el `MANIFEST`
+viejo: el ZIP es determinista (todas las entradas con la misma marca de tiempo) y la sincronización
+incremental del contexto de BuildKit compara tamaño + mtime, así que un fichero cambiado del mismo tamaño se
+reutiliza. El preflight lo detectó y **se negó a ejecutar** (fallo cerrado correcto), pero habría bloqueado
+una actualización en el NAS. Corrección: el lanzador compara el manifest del paquete con el de la última
+imagen y, si difiere, refresca las marcas de tiempo antes de construir (`./kawa-edge refresh-context` para el
+camino manual). Re-probado en la misma ruta: PASS.
 
 ## 6. Bloqueos (declarados, no resueltos en silencio)
 
