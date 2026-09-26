@@ -1,4 +1,30 @@
-# KAWA Edge V1.3.1 · R3.1 · evidencia focalizada (R3-01, R3-02, R3-03, R3-07; B-1/B-2)
+# KAWA Edge V1.3.1 · R3.2 · evidencia (R3-01…R3-16; B-1/B-2)
+
+## R3.2 · artefacto vigente (sustituye a R3.1)
+
+| | |
+|---|---|
+| ZIP | `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.2_2026-09-26.zip` |
+| SHA-256 ZIP | `ebd7dfd22fdbcdd4dc12393b6f1a8b32d7409f9257b5c65722a563b657890b4b` (línea 1 del `.sha256`) |
+| SHA-256 manifiesto | `43dc60b07e5ad71e479f0dcbaea28472aa3d08d1f059ed8421f5a88faa947c41` (línea 2; 103 ficheros) |
+| Huella de entradas de tests | `5b9922fedf595376…` |
+
+R3.2 = R3.1 + cierre de **todos** los P3 de la auditoría de R3 (R3-04…R3-16), por instrucción del owner. Tabla
+por hallazgo: `CHANGELOG_V1_3_1.md` §R3.2. Controles negativos: `R3.2_negative_controls.txt` (se revierte cada
+corrección y su test lo detecta, **15/15**).
+
+| Paso (exportación limpia del commit → imagen → paquete) | Resultado |
+|---|---|
+| `test-full` | PASS · Edge 95/95 (11/11, exit 0) · deployer **101/101** anclado por fichero · 119.4 s |
+| `rehearse` (R3.2 toca los gates G y K) | PASS · 13 gates + 5 CLOUD_ONLY · 203.4 s |
+| `verify-release` | PASS · 104 entradas canónicas, regulares, cabeceras coherentes |
+| **Gate físico** (directorio vacío, `sha256sum -c` antes de extraer, uid 1026:100, imagen desde el ZIP) | `verify-fast` PASS 14.7 s · `test-full` PASS 118.2 s, misma huella `5b9922fe…` · 163 s |
+
+B-1 y B-2 siguen **sin codificar** (sección final): necesitan la decisión del owner y el contrato del Hub.
+
+---
+
+## R3.1 · registro anterior (R3-01, R3-02, R3-03, R3-07)
 
 Base: R3 exacta (commit `28652fa`, ZIP `ce1405d5…ce3a`), auditada **PASS WITH OBSERVATIONS**
 (`KAWA_EDGE_V1_3_1_R3_AUDIT_VERDICT.md`, SHA-256 `1c29ff98…8b43`). Solo cambian los ficheros de estas correcciones;
