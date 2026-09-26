@@ -34,13 +34,29 @@ timeouts. Detalle: `ROOT_CAUSE_NAS_53_90.md`.
 | Suite | Resultado |
 |---|---|
 | Edge (workerd) | **95/95 PASS** — 90 de R4 sin modificar + 2 guardián + 3 consumer con su entrada |
-| Deployer | **37/37 PASS** — unit, equivalencia semántica con R4, E2E del instalador contra API simulado |
+| Deployer | **46/46 PASS** — 27 unit (incl. runner de gates), 3 equivalencia semántica con R4, 16 E2E del instalador contra API simulado |
 | Ensayo local de gates STAGING | **PASS** — 13 ejecutados, 5 `CLOUD_ONLY` (justificado en TEST_REPORT §5) |
 | Gate físico sobre el ZIP final | ver §4 |
 
 ## 4. Tiempos medidos (entorno NAS-equivalente: contenedor de la imagen, 4 vCPU, rootfs read-only, uid no-root)
 
-__TIMINGS__
+| Paso | Antes (R4, entorno del NAS) | Ahora (V1.3.1 R1) |
+|---|---|---|
+| Instalación limpia de dependencias (imagen sin caché: `npm ci` + export) | `npm ci` en bind mount del NAS (no medido por fase) | **28.4 s** (de ellos `npm ci` 8.6 s) |
+| Reconstrucción tras un cambio solo de código | reinstalar | **1.4 s** (capa de dependencias en caché) |
+| Fast preflight (`verify-fast`: manifest, toolchain, config, aislamiento, 8 bundles offline, 30 unit) | — | **11.7 s** |
+| Targeted (`test-targeted`, 1 fichero de test del Edge) | suite completa | **2.0 s** |
+| Targeted (cambio solo de documentación) | suite completa | **0.0 s** (nada que ejecutar) |
+| Full release gate (`test-full`: Edge 95 + deployer 46) | **267.7 s y FAIL 53/90** (NAS); 101.9 s y FAIL 50/90 (DNS muerto, 4 vCPU) | **67.2 s PASS** (Edge 7.6 s en paralelo por fichero; deployer 59.6 s en paralelo por fichero, antes 135 s en serie) |
+| Empaquetado (`package`, sin re-ejecutar la suite) | 15–20 min (incluía repetir la suite) | __PKG__ |
+| Verificación del ZIP (`verify-release`) | — | __VR__ |
+| Install STAGING hasta gates (preflight + 6 bundles + 6 despliegues, contra API simulado) | manual, Worker a Worker | **13.6 s**; re-ejecución idempotente **7.0 s** |
+| Gates STAGING | — | ensayo local **198 s** (13 gates); en Cloudflare no medible aquí (estimado ≈ 20 min: retries de 60 s del halt + gate K de 6 min) |
+| Gate físico sobre el ZIP final (extraer → imagen → verify-fast → test-full → rehearse) | — | __PHYS__ |
+
+Ningún paso supera los objetivos (empaquetado ≪ 5 min; full test ≪ 10 min). El flujo normal nunca ejecuta dos
+suites completas seguidas: `package` reutiliza la evidencia de `test-full` si el hash del árbol de entrada
+coincide (`TEST_EVIDENCE_V1_3_1.json`), y se niega si no.
 
 ## 5. Doble auditoría
 
@@ -57,7 +73,7 @@ corregidos con test de regresión donde aplica; P3 corregidos salvo los marcados
 | P1-6 | `--set-halt-notify` rotaba en silencio el path token PROD | solo se sube lo que falta o se pide; el path token solo se rota en `cutover`; test |
 | P1-7 | el lanzador creaba `state/` como root y el contenedor no-root no podía escribir | `chown` al propietario de la carpeta; error legible si aun así falla |
 | P1-8 | `network_mode: bridge` compartía la red por defecto con otros contenedores | red propia del proyecto |
-| P2 | redacción por trozos; limpieza que tragaba errores; Ctrl-C durante una pausa; ISO-XY/add-hub con > 2 Hubs; digest de secreto PROD en disco; otro Hub apuntando al host de HUB_A; huecos de `.dockerignore`; borrado en btrfs | redacción por líneas + máscara de tokens de 43 caracteres; limpieza verificada (FAIL si falla) y manejadores de señal; filtros por X/Y y caso deshabilitado; sin digest PROD; bloqueo de host; exclusiones; advertencia documentada |
+| P2 | redacción por trozos; limpieza que tragaba errores; Ctrl-C durante una pausa; ISO-XY/add-hub con > 2 Hubs; digest SHA-256 sin clave del webhook PROD en `deployed.json`; otro Hub apuntando al host de HUB_A; huecos de `.dockerignore`; borrado en btrfs | redacción por líneas; limpieza verificada (FAIL si falla) y manejadores de señal; filtros por X/Y y caso deshabilitado; `deployed.json` ya no guarda digest PROD; bloqueo de host; exclusiones; advertencia documentada |
 | P2-15 | la evidencia STAGING solo ligaba el código del Edge | liga código + renderizador + versión de wrangler |
 | P3 | parseo de flags con `=`; base del API configurable a cualquier host; informes sin redactar; escritura no atómica; sin timeouts; zip sin límite | corregidos (API solo `api.cloudflare.com` o loopback de tests). **Aceptados:** comprobación de permisos de escritura sin escribir (Cloudflare no lo permite: documentado), `tty:true` en compose |
 
@@ -65,7 +81,16 @@ Hallazgos propios antes de la auditoría (corregidos): gate A asumía 2 destinos
 `.dockerignore` excluía `.gitignore` (fallo de manifest en el NAS); consumer PROD de HUB_A redesplegado al
 añadir HUB_B (lo detectó la guardia de radio de impacto).
 
-**Auditoría 2 (re-auditoría independiente de las correcciones):** __AUDIT2__
+**Auditoría 2 (re-auditoría independiente de las correcciones):** confirmó todas las correcciones P0/P1 y la identidad byte a byte de `edge/src`, y
+encontró un P1 nuevo — `queueBacklog` leía un error de permiso de GraphQL (HTTP 200 + `errors`) como backlog 0:
+el gate G habría fallado siempre sin el permiso opcional de Analytics y C6 podía leerse «limpio» — más P2/P3
+(línea base de la DLQ entre ejecuciones, máscara de 43 caracteres que ocultaba nombres de recursos, dominio
+completo del Hub y `/webhook` codificado en la URL de halts, pruebas del runner, última línea de wrangler,
+carrera Ctrl-C/pausa, `chown -R`, redacción de comentarios exagerados). **Todos corregidos** con tests nuevos
+(runner PASS/PARTIAL/FAIL/limpieza/CLOUD_ONLY, forma de la respuesta de despliegues, error de GraphQL, secreto
+partido entre dos trozos de salida). Matiz aceptado y documentado: el almacén de huellas HMAC de secretos PROD
+guarda la clave junto a las huellas en `state/`; su protección descansa en la entropía del secreto del webhook
+(≥ 16 caracteres exigidos).
 
 ## 6. Bloqueos (declarados, no resueltos en silencio)
 

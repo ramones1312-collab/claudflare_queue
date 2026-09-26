@@ -244,4 +244,6 @@ o bloqueo en ese camino. Si lo hubiera, el consumer lo vería como 403 → `FAIL
 | empaquetado | `package` (reutiliza la evidencia de C si el hash del árbol de entrada coincide; **no** re-ejecuta la suite) | una vez |
 | D · verify-release | `verify-release dist/<zip>` | sobre el ZIP final, una vez |
 
+`package` y `verify-release` son comandos de mantenimiento: se ejecutan desde una copia de trabajo con
+Node 22 (escriben el manifest y el ZIP en el árbol, y el contenedor tiene el rootfs de solo lectura).
 Clasificación de suites: ver `TEST_REPORT_V1_3_1.md §3` (PARALLEL SAFE / SERIAL REQUIRED y por qué).

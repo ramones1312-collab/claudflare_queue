@@ -47,8 +47,9 @@ const deployerTests = (filter = null) => fs.readdirSync(path.join(DEPLOYER_DIR, 
 async function runDeployerSuite(files) {
   if (!files.length) return { pass: 0, fail: 0, ms: 0, files: 0 };
   const r = await run(process.execPath, ['--test', '--test-reporter=spec', ...files], { tee: true });
-  const pass = (r.text.match(/^\s*✔ /gm) || []).length;
-  const fail = (r.text.match(/^\s*✖ /gm) || []).length;
+  // node:test's own summary, not a count of ✔ lines (which also match nested/suite lines).
+  const num = (k) => { const m = new RegExp(`^ℹ ${k} (\\d+)`, 'm').exec(r.text); return m ? Number(m[1]) : 0; };
+  const pass = num('pass'), fail = num('fail') + num('cancelled');
   return { pass, fail: r.code === 0 ? fail : Math.max(fail, 1), ms: r.ms, files: files.length, code: r.code };
 }
 

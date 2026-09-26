@@ -18,10 +18,10 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 | Edge · guardián de red hermética (nuevo) | 2 | PASS |
 | Edge · consumer con solo su entrada de `DESTINATIONS` (nuevo) | 3 | PASS |
 | **Edge total** | **95** | **95/95 PASS** |
-| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling) | 18 | PASS |
+| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, runner de gates, backlog, id de despliegue) | 27 | PASS |
 | Deployer · equivalencia semántica con los TOML de R4 (lector de wrangler) | 3 | PASS |
 | Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 16 | PASS |
-| **Deployer total** | **37** | **37/37 PASS** |
+| **Deployer total** | **46** | **46/46 PASS** |
 | Ensayo local de gates STAGING (Miniflare, bundles exactos) | 13 ejecutados + 5 `CLOUD_ONLY` | PASS |
 
 **Ningún test de R4 se modificó, se saltó ni se relajó.** Ningún timeout se aumentó.
@@ -47,6 +47,7 @@ Mutación: al quitar el `outboundService`, el test guardián falla en cualquier 
 | Edge · dentro de un fichero | **SERIAL REQUIRED** | `scenario_halt_notify` parchea `globalThis.fetch` durante cada test; varios ficheros comparten contadores de módulo del harness. Es el comportamiento por defecto de vitest |
 | Deployer · entre ficheros | **PARALLEL SAFE** | cada escenario E2E levanta su propio API simulado (puerto efímero) y su propio sandbox (config, state, secrets, runtime, build) |
 | Deployer · dentro de un fichero | serial (por defecto de node:test) | independientes, pero el paralelismo entre ficheros ya satura 4 vCPU (cada escenario ejecuta wrangler) |
+| Deployer · runner de gates (`runner.test.mjs`) | PARALLEL SAFE | objetivo falso en memoria, sin red |
 | Gates STAGING (Cloudflare y ensayo) | **SERIAL REQUIRED** | mismo Sequencer, colas y receptores; G→H→I→J dependen del halt y el backlog que deja el anterior; los gates de orden no pueden compartir receptor con otra carga |
 
 Efecto medido de pasar el E2E del deployer de 1 fichero serial a 5 ficheros paralelos: **135 s → 49 s**
