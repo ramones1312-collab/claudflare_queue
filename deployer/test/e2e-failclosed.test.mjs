@@ -12,6 +12,13 @@ for (const [name, opts, code, re] of [
   ['a paused queue', { queues: [{ name: 'kawa-signal-buffer-hub-b-stg', paused: true }] }, 'RESOURCE_CONFLICT', /PAUSED/],
   ['no workers.dev subdomain', { subdomain: null }, 'NO_WORKERS_SUBDOMAIN', /workers\.dev subdomain/],
   ['an inactive token', { tokenStatus: 'expired' }, 'TOKEN_NOT_ACTIVE', /status is "expired"/],
+  // F-08 · the listing is not trusted to prove absence: a per-name lookup finds it.
+  ['a foreign Worker the listing does not show', { scripts: [{ name: 'kawa-edge-ingress-stg' }], hideFromList: ['kawa-edge-ingress-stg'] }, 'RESOURCE_CONFLICT', /NOT created by this deployer/],
+  // F-09 · a short page is not the end: the conflicting queue is on page 4 of 2-per-page.
+  ['a foreign-consumed queue on a later page', { pageSize: 2, queues: [
+    ...['aaa-1', 'aaa-2', 'aaa-3', 'aaa-4', 'aaa-5'].map(name => ({ name })),
+    ...PRE_EXISTING.map(name => ({ name, consumers: name === 'kawa-signal-buffer-hub-b-dlq-stg' ? [{ script: 'someone-else', type: 'worker' }] : [] })),
+  ] }, 'RESOURCE_CONFLICT', /foreign Workers/],
 ]) {
   test(`fail closed, zero writes: ${name}`, async () => {
     const w = await world(opts);

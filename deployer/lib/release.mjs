@@ -18,7 +18,8 @@ import { loadConfig, validateConfig } from './config.mjs';
 import { localChecks } from './preflight.mjs';
 import { createWrangler, pinnedVersion } from './wrangler.mjs';
 import { buildManifest, verifyManifest, inputTreeHash, listPackageFiles, sha256File, MANIFEST_NAME, testInputFiles } from './manifest.mjs';
-import { writeZip, extractZip } from './zip.mjs';
+import { writeZip, extractZip, readZip } from './zip.mjs';
+import { writeSigned, verify as verifySignature, readEvidence } from './evidence.mjs';
 
 export const IDENTITY = {
   artifact: 'edge-signal-buffer-v1.3.1-nas',
@@ -44,52 +45,98 @@ function run(cmd, args, { cwd = ROOT, env = {}, tee = true } = {}) {
 const deployerTests = (filter = null) => fs.readdirSync(path.join(DEPLOYER_DIR, 'test'))
   .filter(f => f.endsWith('.test.mjs') && (!filter || filter(f))).map(f => path.join('deployer', 'test', f)).sort();
 
+/**
+ * F-01 · A suite PASSES only if the runner itself says so AND nothing is missing: exit code 0, no
+ * failed/pending suite, and every test file on disk ran with at least one test, all passed. A file
+ * that fails to import contributes 0 failed tests, so counts alone can never decide.
+ */
+export function edgeVerdict(res, code, expectedFiles) {
+  const reasons = [];
+  if (code !== 0) reasons.push(`vitest exit code ${code}`);
+  if (!res) return { ok: false, reasons: [...reasons, 'no JSON result'] };
+  if (res.success !== true) reasons.push('runner reports success=false');
+  if (res.numFailedTestSuites) reasons.push(`${res.numFailedTestSuites} failed suite(s)`);
+  if (res.numFailedTests || res.numPendingTests || res.numTodoTests) reasons.push('failed/pending/todo tests');
+  const ran = new Map(res.testResults.map(t => [path.basename(t.name), t]));
+  for (const f of expectedFiles) {
+    const t = ran.get(f);
+    if (!t) { reasons.push(`${f} did not run`); continue; }
+    if (t.status !== 'passed') reasons.push(`${f}: ${t.status}${t.message ? ' — ' + String(t.message).slice(0, 200) : ''}`);
+    if (!t.assertionResults.length) reasons.push(`${f}: 0 tests`);
+    if (t.assertionResults.some(a => a.status !== 'passed')) reasons.push(`${f}: a test did not pass`);
+  }
+  return { ok: reasons.length === 0, reasons };
+}
+
+export function deployerVerdict(summary, code) {
+  const reasons = [];
+  if (code !== 0) reasons.push(`node --test exit code ${code}`);
+  if (!summary.tests) reasons.push('0 tests ran');
+  if (summary.fail || summary.cancelled) reasons.push(`${summary.fail} failed, ${summary.cancelled} cancelled`);
+  if (summary.pass !== summary.tests) reasons.push(`passed ${summary.pass} of ${summary.tests}`);
+  return { ok: reasons.length === 0, reasons };
+}
+
 async function runDeployerSuite(files) {
-  if (!files.length) return { pass: 0, fail: 0, ms: 0, files: 0 };
+  if (!files.length) return { ok: true, pass: 0, fail: 0, tests: 0, ms: 0, files: 0, reasons: [] };
   const r = await run(process.execPath, ['--test', '--test-reporter=spec', ...files], { tee: true });
   // node:test's own summary, not a count of ✔ lines (which also match nested/suite lines).
   const num = (k) => { const m = new RegExp(`^ℹ ${k} (\\d+)`, 'm').exec(r.text); return m ? Number(m[1]) : 0; };
-  const pass = num('pass'), fail = num('fail') + num('cancelled');
-  return { pass, fail: r.code === 0 ? fail : Math.max(fail, 1), ms: r.ms, files: files.length, code: r.code };
+  const summary = { tests: num('tests'), pass: num('pass'), fail: num('fail'), cancelled: num('cancelled') };
+  const v = deployerVerdict(summary, r.code);
+  for (const x of v.reasons) out.fail(`deployer suite: ${x}`);
+  return { ok: v.ok, reasons: v.reasons, ...summary, ms: r.ms, files: files.length, code: r.code };
 }
 
 /**
  * Vite writes a bundled copy of vitest.config.js NEXT TO the config file. The container's root
  * filesystem is read-only, so the suite runs from a tmpfs workspace whose entries are symlinks to the
- * image's own files (same bytes; the config file itself is copied and hash-checked).
+ * image's own files (same bytes; the config file itself is copied and hash-checked). Unique and SHORT
+ * path per run (workerd socket paths have a length limit).
  */
 function edgeWorkspace() {
-  const ws = path.join(os.tmpdir(), 'kawa-edge-tests');
-  fs.rmSync(ws, { recursive: true, force: true });
-  fs.mkdirSync(ws, { recursive: true });
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-'));
   for (const e of fs.readdirSync(EDGE_DIR)) {
     if (e === 'vitest.config.js') continue;
     fs.symlinkSync(path.join(EDGE_DIR, e), path.join(ws, e));
   }
   fs.copyFileSync(path.join(EDGE_DIR, 'vitest.config.js'), path.join(ws, 'vitest.config.js'));
   if (sha256File(path.join(ws, 'vitest.config.js')) !== sha256File(path.join(EDGE_DIR, 'vitest.config.js'))) throw new KawaError('WORKSPACE', 'config copy differs');
+  // F-11 · the image links node_modules/.vite to a tmpfs dir that must exist, or vitest's results
+  // cache write fails AFTER all tests passed and the run exits 1.
+  try {
+    const link = path.join(EDGE_DIR, 'node_modules', '.vite');
+    if (fs.lstatSync(link).isSymbolicLink()) fs.mkdirSync(path.resolve(path.dirname(link), fs.readlinkSync(link)), { recursive: true });
+  } catch { /* not the image layout */ }
   return ws;
 }
+
+export const edgeTestFiles = () => fs.readdirSync(path.join(EDGE_DIR, 'test')).filter(f => f.endsWith('.test.js')).sort();
 
 async function runEdgeSuite(files = []) {
   const json = path.join(os.tmpdir(), `vitest-${crypto.randomBytes(4).toString('hex')}.json`);
   const ws = edgeWorkspace();
   const r = await run(path.join(EDGE_DIR, 'node_modules', '.bin', 'vitest'),
     ['run', '--reporter=default', '--reporter=json', `--outputFile.json=${json}`, ...files], { cwd: ws, tee: false });
+  fs.rmSync(ws, { recursive: true, force: true });
   let res = null;
-  try { res = JSON.parse(fs.readFileSync(json, 'utf8')); fs.rmSync(json, { force: true }); } catch { /* reported below */ }
+  try { res = JSON.parse(fs.readFileSync(json, 'utf8')); fs.rmSync(json, { force: true }); } catch { /* verdict below */ }
   const summary = (r.text.match(/Test Files .*|Tests .*|Duration .*/g) || []).map(s => s.trim());
   for (const s of summary) out.info(s);
-  if (!res) return { pass: 0, fail: 1, ms: r.ms, error: 'vitest produced no JSON result', tail: r.text.slice(-2000) };
+  const expected = files.length ? files.map(f => path.basename(f)) : edgeTestFiles();
+  const v = edgeVerdict(res, r.code, expected);
+  for (const x of v.reasons) out.fail(`edge suite: ${x}`);
+  if (!res) return { ok: false, reasons: v.reasons, pass: 0, fail: 1, ms: r.ms, code: r.code, tail: r.text.slice(-2000) };
   const rel = (n) => path.relative(fs.realpathSync(EDGE_DIR), fs.realpathSync(n));
-  const byFile = res.testResults.map(t => ({ file: rel(t.name), tests: t.assertionResults.length,
+  const byFile = res.testResults.map(t => ({ file: rel(t.name), status: t.status, tests: t.assertionResults.length,
     failed: t.assertionResults.filter(a => a.status !== 'passed').length,
     ms: Math.round(t.endTime - t.startTime) }));
   const slow = res.testResults.flatMap(t => t.assertionResults.map(a => ({ test: a.fullName, ms: Math.round(a.duration || 0) }))).sort((a, b) => b.ms - a.ms).slice(0, 5);
   const failures = res.testResults.flatMap(t => t.assertionResults.filter(a => a.status !== 'passed').map(a => `${a.fullName}: ${(a.failureMessages || []).join(' ').slice(0, 300)}`));
   for (const f of failures) out.fail(f);
-  return { pass: res.numPassedTests, fail: res.numFailedTests + res.numPendingTests + res.numTodoTests, total: res.numTotalTests,
-           files: res.numTotalTestSuites, ms: r.ms, by_file: byFile, slowest: slow, failures, code: r.code };
+  return { ok: v.ok, reasons: v.reasons, pass: res.numPassedTests, fail: res.numFailedTests + res.numPendingTests + res.numTodoTests,
+           total: res.numTotalTests, files: res.testResults.length, expected_files: expected.length, describe_blocks: res.numTotalTestSuites,
+           ms: r.ms, by_file: byFile, slowest: slow, failures, code: r.code };
 }
 
 function toolchain() {
@@ -120,7 +167,7 @@ export async function verifyFast(ctx, f) {
   for (const env of Object.keys(cfg.envs)) await localChecks({ cfg, env, wrangler, dryRun: !f['no-dry-run'], inContainer: !!process.env.KAWA_IN_CONTAINER });
   out.step('Deployer unit tests (no network)');
   const u = await runDeployerSuite(deployerTests(fl => !fl.startsWith('e2e')));
-  if (u.fail) return { result: 'FAIL', detail: `deployer unit tests: ${u.fail} failed` };
+  if (!u.ok) return { result: 'FAIL', detail: `deployer unit tests: ${u.reasons.join('; ')}` };
   return { result: 'PASS', detail: `fast preflight in ${((Date.now() - t0) / 1000).toFixed(1)} s · ${u.pass} unit tests` };
 }
 
@@ -152,12 +199,12 @@ export async function testTargeted(ctx, f) {
   if (sel.allEdge || sel.edgeFiles.length) {
     out.step(`Edge suite (${sel.allEdge ? 'all files' : sel.edgeFiles.join(', ')})`);
     const e = await runEdgeSuite(sel.allEdge ? [] : sel.edgeFiles);
-    fails += e.fail; passes += e.pass;
+    fails += e.ok ? 0 : Math.max(e.fail, 1); passes += e.pass;
   }
   if (sel.deployer) {
     out.step('Deployer suite');
     const d = await runDeployerSuite(deployerTests());
-    fails += d.fail; passes += d.pass;
+    fails += d.ok ? 0 : Math.max(d.fail, 1); passes += d.pass;
   }
   if (!passes && !fails) return { result: 'PASS', detail: 'no test-affecting change' };
   return { result: fails ? 'FAIL' : 'PASS', detail: `targeted: ${passes} passed, ${fails} failed` };
@@ -171,24 +218,26 @@ export async function testFull(ctx, f) {
   const edge = await runEdgeSuite();
   out.step('Deployer suite · node:test · files in parallel (unit + installer E2E against the mock Cloudflare API)');
   const dep = await runDeployerSuite(deployerTests());
-  const result = !edge.fail && !dep.fail && edge.pass > 0 ? 'PASS' : 'FAIL';
+  const result = edge.ok && dep.ok ? 'PASS' : 'FAIL';
   const evidence = { schema: 'kawa.edge.test.evidence.v1', ...IDENTITY, result, input_tree_sha256: hash,
     input_files: testInputFiles(ROOT).length, at: new Date().toISOString(), toolchain: toolchain(),
     edge_suite: edge, deployer_suite: dep };
   const dir = path.join(STATE_DIR, 'evidence');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `test-full-${hash.slice(0, 16)}-${result}.json`);
-  fs.writeFileSync(file, JSON.stringify(evidence, null, 2));
-  return { result, detail: `Edge ${edge.pass}/${edge.total ?? edge.pass + edge.fail} · deployer ${dep.pass} passed, ${dep.fail} failed · ${(edge.ms / 1000).toFixed(1)} s + ${(dep.ms / 1000).toFixed(1)} s`, report: file };
+  writeSigned(file, evidence);
+  return { result, detail: `Edge ${edge.pass}/${edge.total ?? edge.pass + edge.fail} (${edge.files ?? 0}/${edge.expected_files ?? '?'} files, exit ${edge.code}) · deployer ${dep.pass}/${dep.tests} (exit ${dep.code}) · ${(edge.ms / 1000).toFixed(1)} s + ${(dep.ms / 1000).toFixed(1)} s`, report: file };
 }
 
 // ---- PACKAGE ----------------------------------------------------------------------------------
 export function findEvidence(hash) {
-  const dir = path.join(STATE_DIR, 'evidence');
-  const p = path.join(dir, `test-full-${hash.slice(0, 16)}-PASS.json`);
-  if (!fs.existsSync(p)) return null;
-  const e = JSON.parse(fs.readFileSync(p, 'utf8'));
-  return e.input_tree_sha256 === hash && e.result === 'PASS' ? { file: p, e } : null;
+  const p = path.join(STATE_DIR, 'evidence', `test-full-${hash.slice(0, 16)}-PASS.json`);
+  const e = fs.existsSync(p) ? readEvidence(p) : null;
+  if (!e) return null;
+  // F-04 · only evidence written by test-full on this installation counts (a hand-written file with
+  // the right hash is refused). The independent assurance remains re-running test-full on the ZIP.
+  if (!verifySignature(e)) throw new KawaError('EVIDENCE_UNSIGNED', `${path.basename(p)} is not signed by this installation`, 'Re-run ./kawa-edge test-full.');
+  return e.input_tree_sha256 === hash && e.result === 'PASS' && e.edge_suite && e.edge_suite.ok && e.deployer_suite && e.deployer_suite.ok ? { file: p, e } : null;
 }
 
 export async function packageRelease(ctx, f) {
@@ -225,26 +274,37 @@ export async function verifyRelease(ctx, f) {
   out.step(`Verify ${path.basename(zip)}`);
   const zsha = sha256File(zip);
   const side = `${zip}.sha256`;
-  if (fs.existsSync(side)) {
-    const want = fs.readFileSync(side, 'utf8').split(/\s+/)[0];
-    if (want !== zsha) throw new KawaError('ZIP_SHA_MISMATCH', `sha256 ${zsha} != ${want}`);
-    out.ok(`sha256 matches ${path.basename(side)}`);
-  } else out.info(`sha256 ${zsha} (no sidecar to compare)`);
+  const want = f.sha256 || (fs.existsSync(side) ? fs.readFileSync(side, 'utf8').split(/\s+/)[0] : null);
+  if (!want) throw new KawaError('ZIP_SHA_UNKNOWN', `no ${path.basename(side)} and no --sha256=<expected>: integrity cannot be checked`);
+  if (want !== zsha) throw new KawaError('ZIP_SHA_MISMATCH', `sha256 ${zsha} != ${want}`);
+  out.ok('sha256 matches the expected value');
+  // F-06 · inspect the RAW entry list, not a filtered directory listing: every entry must be under the
+  // package root, declared in the manifest, and nothing secret/stateful may be present at all.
+  const entries = readZip(zip).map(e => e.name);
+  const outside = entries.filter(n => !n.startsWith(`${ZIP_ROOT}/`) || n.includes('..') || n.startsWith('/'));
+  if (outside.length) throw new KawaError('ZIP_ENTRY_OUTSIDE_ROOT', outside.slice(0, 5).join(', '));
+  const rel = entries.map(n => n.slice(ZIP_ROOT.length + 1));
+  const forbiddenRaw = rel.filter(p => /(^|\/)node_modules\/|(^|\/)\.git\/|^state\/|^dist\/|^secrets\/(?!README\.md$)|^config\/kawa-edge\.json|^config\/.*\.(bak|tmp)-|(^|\/)\.dev\.vars$|(^|\/)\.npmrc$|(^|\/)\.env$|^edge\/wrangler\.(toml|json)$|\.(zip|sha256|log)$/.test(p));
+  if (forbiddenRaw.length) throw new KawaError('FORBIDDEN_FILES', forbiddenRaw.join(', '));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kawa-verify-'));
   try {
     extractZip(zip, tmp);
     const root = path.join(tmp, ZIP_ROOT);
     const m = verifyManifest(root);
     if (!m.ok) throw new KawaError('MANIFEST_MISMATCH', `missing ${m.missing} mismatched ${m.mismatched} undeclared ${m.extra}`);
+    const declared = new Set([...Object.keys(JSON.parse(fs.readFileSync(path.join(root, MANIFEST_NAME), 'utf8')).files), MANIFEST_NAME]);
+    const undeclared = rel.filter(p => !declared.has(p));
+    const absent = [...declared].filter(p => !rel.includes(p));
+    if (undeclared.length || absent.length) throw new KawaError('ZIP_ENTRIES_NOT_MANIFEST', `undeclared ${undeclared.join(',') || '-'} · absent ${absent.join(',') || '-'}`);
     out.ok(`manifest: ${m.file_count} files verified · ${m.artifact} · ${m.revision}`);
     const ev = JSON.parse(fs.readFileSync(path.join(root, EVIDENCE_NAME), 'utf8'));
     const h = inputTreeHash(root);
     if (ev.input_tree_sha256 !== h || ev.result !== 'PASS') throw new KawaError('EVIDENCE_NOT_BOUND', `evidence is for ${ev.input_tree_sha256.slice(0, 16)}…, package inputs are ${h.slice(0, 16)}…`);
-    out.ok(`test evidence bound to these bytes: input tree ${h.slice(0, 16)}… · Edge ${ev.edge_suite.pass}/${ev.edge_suite.total} · deployer ${ev.deployer_suite.pass} passed`);
-    const all = listPackageFiles(root);
-    const forbidden = all.filter(p => /(^|\/)node_modules\/|^state\/|^secrets\/(?!README\.md$)|^config\/kawa-edge\.json$|^edge\/wrangler\.(toml|json)$|\.dev\.vars$/.test(p));
-    if (forbidden.length) throw new KawaError('FORBIDDEN_FILES', forbidden.join(', '));
-    out.ok('no secrets, state, node_modules, user config or implicit root wrangler config in the package');
+    if (!ev.edge_suite.ok || !ev.deployer_suite.ok || ev.edge_suite.code !== 0 || ev.deployer_suite.code !== 0) throw new KawaError('EVIDENCE_NOT_PASS', 'packaged evidence records a non-zero exit or a failed verdict');
+    out.ok(`test evidence bound to these bytes: input tree ${h.slice(0, 16)}… · Edge ${ev.edge_suite.pass}/${ev.edge_suite.total} (exit 0) · deployer ${ev.deployer_suite.pass}/${ev.deployer_suite.tests} (exit 0)`);
+    out.info('the packaged evidence is a signed RECORD; independent assurance = re-run ./kawa-edge test-full on this ZIP (physical gate)');
+    const all = rel;
+    out.ok(`raw ZIP entries (${entries.length}) = manifest + itself; no secrets, state, node_modules, user config or implicit root wrangler config`);
     for (const p of ['Dockerfile', 'docker-compose.yml', 'kawa-edge', 'README_NAS_INSTALL.md', 'RUNBOOK_VIGENTE.md', 'edge/package-lock.json', 'config/kawa-edge.example.json']) {
       if (!all.includes(p)) throw new KawaError('INCOMPLETE_PACKAGE', `missing ${p}`);
     }

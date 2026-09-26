@@ -11,7 +11,8 @@ import crypto from 'node:crypto';
 export const MANIFEST_NAME = 'MANIFEST_SHA256_V1_3_1.json';
 
 /** Never part of the package. */
-const EXCLUDE_DIRS = new Set(['node_modules', '.git', '.wrangler', 'state', 'dist', 'build', '.vite']);
+const EXCLUDE_DIRS = new Set(['state', 'dist', 'build', 'delivery']);   // delivery/: notes for reviewers, not package content
+const ANYWHERE = new Set(['node_modules', '.git', '.wrangler', '.vite']);
 const EXCLUDE_FILES = [/^secrets\/(?!README\.md$)/, /^config\/kawa-edge\.json(\.bak-.*)?$/, /\.log$/, /^\.claude\//];
 
 export function sha256File(file) {
@@ -23,8 +24,12 @@ export function listPackageFiles(root) {
   (function walk(rel) {
     for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
       const r = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isDirectory()) { if (!EXCLUDE_DIRS.has(e.name)) walk(r); continue; }
-      if (e.isSymbolicLink()) continue;
+      // F-12 · exclusions apply at the ROOT only (edge/src/state/x.js is package content), except
+      // node_modules/.git/.wrangler/.vite anywhere.
+      const excluded = ANYWHERE.has(e.name) || (!rel && EXCLUDE_DIRS.has(e.name));
+      if (e.isDirectory()) { if (!excluded) walk(r); continue; }
+      // A symlink inside the package is refused, never silently skipped (it could hide test inputs).
+      if (e.isSymbolicLink()) { if (!excluded) throw new Error(`symbolic link in the package: ${r}`); continue; }
       if (!e.isFile()) continue;
       if (EXCLUDE_FILES.some(re => re.test(r))) continue;
       outFiles.push(r);

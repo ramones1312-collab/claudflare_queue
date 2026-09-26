@@ -118,7 +118,7 @@ export async function cloudChecks({ env, plan, api, stateDeployed = {} }) {
   }
 
   for (const w of plan.workers) {
-    if (!scriptNames.has(w.name)) { actions.push({ kind: 'worker', name: w.name, action: 'CREATE', worker: w }); continue; }
+    if (!scriptNames.has(w.name) && !(await api.scriptExists(w.name))) { actions.push({ kind: 'worker', name: w.name, action: 'CREATE', worker: w }); continue; }
     const settings = await api.scriptSettings(w.name);
     const vars = Object.fromEntries(((settings && settings.bindings) || []).filter(b => b.type === 'plain_text').map(b => [b.name, b.text]));
     const expected = managedValue(env, w.role === 'consumer' ? `consumer:${w.dest}` : w.role === 'receiver' ? `receiver:${w.dest}` : w.role);

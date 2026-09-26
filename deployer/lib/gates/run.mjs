@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { out, redact } from '../log.mjs';
 import { names } from '../naming.mjs';
+import { writeSigned } from '../evidence.mjs';
 
 class GateFail extends Error {}
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -92,6 +93,9 @@ function strictOrder(observations, seqs) {
   return { ok: JSON.stringify(first2xx) === JSON.stringify(want), order: first2xx, expected: want };
 }
 
+/** The Cloudflare gate list is fixed HERE, in code; evidence can never declare its own list (F-04). */
+export const CLOUD_GATE_IDS = Object.freeze(['G00', 'A', 'C', 'E', 'D', 'F', 'M', 'ISO-X', 'ISO-Y', 'ISO-XY', 'G', 'H', 'I', 'J', 'L', 'K', 'BYTE', 'RB']);
+
 export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   const T = kind === 'cloud' ? { deliver: 180e3, halt: 420e3, lost: 420e3 } : { deliver: 90e3, halt: 240e3, lost: 240e3 };
   const qX = names.queue('staging', X), qY = names.queue('staging', Y);
@@ -103,10 +107,10 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   // workerd keeps a Durable Object's alarm timestamp but never fires it (proven, RELEASE_REPORT §5).
   const cloudOnly = { cloudOnly: true };
 
-  gate('G00', 'Baseline: schema 2, both destinations clean, receivers reset', async (h) => {
+  gate('G00', 'Baseline: schema 2, every enabled destination clean, receivers reset', async (h) => {
     const s = await h.stats();
     expect(s.schema_version === 2, `schema_version ${s.schema_version}`);
-    for (const id of [X, Y]) {
+    for (const id of all) {
       const d = s.destinations[id];
       expect(d && d.enabled, `${id} not configured/enabled in the Sequencer`);
       expect(d.halted_seq === null, `${id} is halted at ${d.halted_seq} (left by an earlier run?)`, 'run: ./kawa-edge gates --repair');
@@ -178,7 +182,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
     return { edge_seq: a.seq, observations: o.map(x => x.outcome), attempts: dx.delivery_attempts };
   });
 
-  gate('M', `Receiver outage on ${Y} (503) with 3 in flight: nothing lost, strict order on recovery`, async (h) => {
+  gate('M', `Receiver outage on ${Y}: 3 alerts in flight, the first delivery gets a 503; nothing lost, strict order on recovery`, async (h) => {
     await h.control(Y, 'fail5xx_once');
     const r = await Promise.all([h.send('M'), h.send('M'), h.send('M')]);
     const seqs = r.map(x => x.seq).sort((a, b) => a - b);
@@ -218,7 +222,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
       seqs = [(await h.send('ISO-XY')).seq, (await h.send('ISO-XY')).seq];
       await sleep(15000);
       for (const d of [X, Y]) expect((await h.obs(d, seqs)).length === 0, `${d} received while paused`);
-      for (const s of seqs) { const sig = await h.signal(s); expect(sig.found && sig.received && sig.deliveries.filter(d => d.destination_id === X || d.destination_id === Y).every(d => ['PENDING_DISPATCH', 'DISPATCHED'].includes(d.state)), `seq ${s} not durable/pending for ${X}/${Y}`); }
+      for (const s of seqs) { const sig = await h.signal(s); const xy = sig.deliveries.filter(d => d.destination_id === X || d.destination_id === Y); expect(sig.found && sig.received && xy.length === 2 && xy.every(d => ['PENDING_DISPATCH', 'DISPATCHED'].includes(d.state)), `seq ${s} not durable/pending for both ${X} and ${Y}`); }
       await t.resume(qY);
       await h.waitFor(`${Y} converges first`, () => h.got2xx(Y, seqs), T.halt);
       expect((await h.obs(X, seqs)).length === 0, `${X} received while still paused`);
@@ -228,7 +232,8 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   }, cloudOnly);
 
   gate('G', `FAILED_PERMANENT on ${Y} (permanent 4xx): DLQ record (platform-verified when readable), halt of ${Y} only; ${X} delivers`, async (h, t) => {
-    st.dlqBaseline = await t.dlqBacklog(names.dlq('staging', Y));
+    // Baseline before the failing alert. Three attempts, so one API hiccup does not decide it.
+    for (let i = 0; i < 3 && !(st.dlqBaseline && st.dlqBaseline.readable); i++) { st.dlqBaseline = await t.dlqBacklog(names.dlq('staging', Y)); if (!(st.dlqBaseline && st.dlqBaseline.readable)) await sleep(2000); }
     await h.control(Y, 'permanent4xx');
     const a = await h.send('G');
     st.s1 = a.seq;
@@ -244,12 +249,12 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
     // evidence says so explicitly: the record is then proven only by contract (the consumer calls
     // haltedDlq() only after DLQ.send() is confirmed; workerd test CASE H).
     let dlq;
-    const first = st.dlqBaseline;
-    if (first === null) dlq = { verified: false, basis: 'contract (R4 CASE H); backlog metric unreadable without Account Analytics: Read' };
+    const base = st.dlqBaseline;
+    if (!base || !base.readable) dlq = { verified: false, basis: 'contract (R4 CASE H); backlog metric unreadable (Account Analytics: Read missing or API error) — does NOT authorise PROD' };
     else {
-      // Nobody consumes the DLQ, so earlier runs leave records: require it to GROW past this baseline.
-      const b = await h.waitFor(`${Y} DLQ backlog > ${first}`, async () => { const v = await t.dlqBacklog(names.dlq('staging', Y)); return v !== null && v > first ? v : null; }, 300e3);
-      dlq = { verified: true, backlog_before: first, backlog_after: b };
+      const from = base.value ?? 0;
+      const b = await h.waitFor(`${Y} DLQ backlog > ${from}`, async () => { const v = await t.dlqBacklog(names.dlq('staging', Y)); return v && v.readable && v.value !== null && v.value > from ? v.value : null; }, 300e3);
+      dlq = { verified: true, backlog_before: from, backlog_after: b };
     }
     return { edge_seq: a.seq, state: dy.state, halt_reason: dy.halt_reason, halted_seq: a.seq, dlq };
   });
@@ -311,7 +316,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
       await t.redeployIngress();
       const dep1 = await t.deploymentId();
       // Proof that the ingress (and so its Durable Object) was really replaced, not merely still up.
-      expect(dep0 !== dep1 && dep1 !== null, `ingress deployment unchanged (${dep0} -> ${dep1}): no restart happened`);
+      expect(dep0 !== null && dep1 !== null && dep0 !== dep1, `ingress deployment id ${dep0} -> ${dep1}: no proven restart`);
       restart = { from: dep0, to: dep1 };
       await h.waitFor('ingress back after redeploy', async () => { try { return (await t.fetch(`${t.base.ingress}/`, { method: 'GET' })).status === 405; } catch { return false; } }, T.deliver);
       const after = await h.stats();
@@ -337,7 +342,10 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
     await h.waitFor(`${X} delivers after the long outage`, () => h.got2xx(X, [a.seq]), T.halt);
     const o = await h.obs(X, [a.seq]);
     expect(o.filter(x => x.outcome === 'ACCEPTED').length === 1, 'accepted more than once');
-    return { edge_seq: a.seq, observations: o.map(x => x.outcome) };
+    // The point of K: the Sequencer's 5-min redispatch lease REPUBLISHED the delivery (F-17).
+    const dx = (await h.signal(a.seq)).deliveries.find(d => d.destination_id === X);
+    expect(dx && dx.dispatch_attempts >= 2, `no redispatch observed (dispatch_attempts ${dx && dx.dispatch_attempts})`);
+    return { edge_seq: a.seq, observations: o.map(x => x.outcome), dispatch_attempts: dx.dispatch_attempts };
   }, { optional: !includeLong, cloudOnly: true });
 
   gate('BYTE', 'Byte-for-byte: every delivered body hashes to what was sent', async (h) => {
@@ -363,7 +371,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   gate('RB', 'Rollback readiness: every destination drained, no halt, gate ok:true', async (h) => {
     await h.waitFor('all destinations drained', async () => {
       const s = await h.stats();
-      return [X, Y].every(d => s.destinations[d].unresolved === 0 && s.destinations[d].halted_seq === null);
+      return all.every(d => s.destinations[d] && s.destinations[d].unresolved === 0 && s.destinations[d].halted_seq === null);
     }, T.halt);
     const r = await h.admin('GET', '/rollback-readiness');
     expect(r.status === 200 && r.body.ok === true && r.body.readiness.blockers.length === 0, `readiness ${r.status} ${JSON.stringify(r.body.readiness && r.body.readiness.blockers)}`);
@@ -436,13 +444,13 @@ export async function runGates({ target, secrets, dests, all = dests, includeLon
   // PASS: every gate this target can run passed and cleanup succeeded. A cloud run with a skipped gate
   // is PARTIAL (never a STAGING PASS); the local rehearsal never claims the CLOUD_ONLY gates.
   const ran = results.filter(r => r.status !== 'CLOUD_ONLY');
-  const result = failed || cleanupErrors.length ? 'FAIL' : ran.every(r => r.status === 'PASS') ? 'PASS' : 'PARTIAL';
+  const result = failed || cleanupErrors.length || !ran.length ? 'FAIL' : ran.every(r => r.status === 'PASS') ? 'PASS' : 'PARTIAL';
   const report = { schema: 'kawa.edge.staging.gates.v1', result, target: target.kind, run_id: runId, cleanup_errors: cleanupErrors,
                    mandatory_gates: gates.filter(g => target.kind === 'cloud' || !g.cloudOnly).map(g => g.id),
                    started: new Date(t0).toISOString(), duration_s: Math.round((Date.now() - t0) / 1000),
                    destinations: [X, Y], ...meta, gates: results };
   fs.mkdirSync(evidenceDir, { recursive: true });
   const file = path.join(evidenceDir, `staging-gates-${target.kind}-${new Date(t0).toISOString().replace(/[:.]/g, '-')}-${result}.json`);
-  fs.writeFileSync(file, redact(JSON.stringify(report, null, 2)));
+  writeSigned(file, JSON.parse(redact(JSON.stringify(report))));
   return { result, report, file };
 }

@@ -19,6 +19,7 @@ import { execute, loadDeployed, secretsFingerprint } from './deploy.mjs';
 import { names } from './naming.mjs';
 import { promptHidden, validateWebhookUrl, checkAndRecordFingerprint, ensureStagingSecrets, loadStagingSecrets } from './secrets.mjs';
 import { cloudContext, writeReport, stagingSecretsFor, hubHostsOf } from './commands.mjs';
+import { requireStagingPass, confirmIngressRedeploy } from './prod.mjs';
 
 export async function addHub(ctx, f) {
   const id = String(f._[0] || '').toUpperCase();
@@ -42,6 +43,13 @@ export async function addHub(ctx, f) {
 
   const local = await localChecks({ cfg: next, env, wrangler: createWrangler({ quiet: true }), inContainer: !!process.env.KAWA_IN_CONTAINER });
   const cloud = await cloudContext(next);
+  if (env === 'prod') {
+    // F-03 · the same gate as prod-deploy: nothing reaches PROD (the new consumer, the updated
+    // ingress/Sequencer) without a signed, corroborated STAGING PASS that tested THIS destination.
+    const gate = await requireStagingPass(next, cloud.api, { prodDests: next.envs.prod.destinations });
+    if (!gate.pass) return { result: 'BLOCKED', detail: `${gate.blocked} (add ${id} to STAGING and pass the gates first)` };
+    await confirmIngressRedeploy(f);
+  }
   let secretsFor = () => null;
   let commit = () => {};
   if (env === 'staging') {

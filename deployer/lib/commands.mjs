@@ -14,7 +14,9 @@ import { execute, loadDeployed, secretsFingerprint } from './deploy.mjs';
 import { runGates, repairStaging } from './gates/run.mjs';
 import { cloudTarget, localTarget } from './gates/targets.mjs';
 import { names } from './naming.mjs';
-import { edgeSourcesHash, stagingBindingHash } from './render.mjs';
+import { edgeSourcesHash } from './render.mjs';
+import { bindingHash } from './evidence.mjs';
+import { runtimeDestinations } from './config.mjs';
 import { pinnedVersion } from './wrangler.mjs';
 import { EDGE_DIR } from './paths.mjs';
 import { BUILD_DIR, STATE_DIR } from './paths.mjs';
@@ -84,6 +86,13 @@ function gateDests(cfg) {
   if (ids.length < 2) throw new KawaError('GATES_NEED_TWO_DESTINATIONS', 'the STAGING gates need at least two enabled destinations (isolation gates)');
   return ids.slice(0, 2);
 }
+/** What a STAGING run certifies: bound build, account, the destinations it tested, the builds on Cloudflare. */
+function evidenceMeta(p) {
+  return { edge_sources_sha256: edgeSourcesHash(EDGE_DIR), binding_sha256: bindingHash(pinnedVersion()),
+           account_id: p.cfg.account_id, destinations_config: runtimeDestinations(p.cfg.envs.staging.destinations),
+           builds: Object.fromEntries(p.local.plan.workers.map(w => [w.name, w.build])) };
+}
+
 function gateOutcome(g) {
   if (g.result === 'PARTIAL') return { result: 'BLOCKED', detail: 'STAGING PARTIAL: a gate was skipped (--quick); this is NOT a STAGING PASS', report: g.file };
   return { result: g.result, detail: `STAGING ${g.result}`, report: g.file };
@@ -163,7 +172,7 @@ export const COMMANDS = {
       const dests = gateDests(p.cfg);
       if (f.repair) await repairStaging(target, p.secrets, dests);
       const g = await runGates({ target, secrets: p.secrets, dests, all: enabledIds(p.cfg), includeLong: !f.quick, evidenceDir: path.join(STATE_DIR, 'evidence'),
-                                 meta: { edge_sources_sha256: edgeSourcesHash(EDGE_DIR), binding_sha256: stagingBindingHash(EDGE_DIR, pinnedVersion()), builds: Object.fromEntries(p.local.plan.workers.map(w => [w.name, w.build])) } });
+                                 meta: evidenceMeta(p) });
       p.tm.mark('gates_ms');
       writeReport('install-staging', { result: g.result, applied: done, gates_evidence: g.file, timings: p.tm.marks });
       return gateOutcome(g);
@@ -182,7 +191,7 @@ export const COMMANDS = {
       const dests = gateDests(p.cfg);
       if (f.repair) await repairStaging(target, p.secrets, dests);
       const g = await runGates({ target, secrets: p.secrets, dests, all: enabledIds(p.cfg), includeLong: !f.quick, evidenceDir: path.join(STATE_DIR, 'evidence'),
-                                 meta: { edge_sources_sha256: edgeSourcesHash(EDGE_DIR), binding_sha256: stagingBindingHash(EDGE_DIR, pinnedVersion()), builds: Object.fromEntries(p.local.plan.workers.map(w => [w.name, w.build])) } });
+                                 meta: evidenceMeta(p) });
       return gateOutcome(g);
     },
   },
@@ -219,7 +228,16 @@ export const COMMANDS = {
       const cfg = await loadConfig(ctx.configFile);
       if (!cfg.envs[env]) throw new KawaError('CONFIG_NO_ENV', `config has no "${env}" section`);
       const cloud = await cloudContext(cfg);
-      for (const d of cfg.envs[env].parsed) { await cloud.wrangler.resumeDelivery(names.queue(env, d.id)); out.ok(`resumed ${names.queue(env, d.id)}`); }
+      const byName = new Map((await cloud.api.listQueues()).map(q => [q.queue_name, q]));
+      for (const d of cfg.envs[env].parsed) {
+        const qn = names.queue(env, d.id);
+        const q = byName.get(qn);
+        if (!q) { out.warn(`${qn}: not found`); continue; }
+        // D-08 · only a queue consumed by OUR consumer (or by nobody) is ours to resume.
+        const consumers = ((await cloud.api.queue(q.queue_id)).consumers || []).map(c => c.script || c.script_name);
+        if (consumers.some(c => c !== names.consumer(env, d.id))) throw new KawaError('FOREIGN_QUEUE', `${qn} is consumed by ${consumers.join(',')}; not resuming`);
+        await cloud.wrangler.resumeDelivery(qn); out.ok(`resumed ${qn}`);
+      }
       return { result: 'PASS' };
     },
   },

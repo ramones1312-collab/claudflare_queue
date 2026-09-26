@@ -54,6 +54,10 @@ export async function execute({ env, actions, api, wrangler, secretsFor, force =
       done.push({ kind: 'worker', name: w.name, result: 'UNCHANGED', build: w.build });
       continue;
     }
+    // D-05 · re-check right before writing: a Worker that appeared since preflight is never overwritten.
+    if (a.action === 'CREATE' && await api.scriptExists(w.name)) {
+      throw new KawaError('RESOURCE_CONFLICT', `${w.name} appeared after preflight; refusing to overwrite it`, 'Re-run: preflight will classify it.');
+    }
     out.info(`deploying ${w.name} (${a.action === 'CREATE' ? 'new' : 'update'}) --config ${path.basename(w.configPath)}${Object.keys(secrets).length ? ` + secrets: ${Object.keys(secrets).join(', ')}` : ''}`);
     if (Object.keys(secrets).length) await withSecretsFile(secrets, (file) => wrangler.deploy(w.configPath, file));
     else await wrangler.deploy(w.configPath);

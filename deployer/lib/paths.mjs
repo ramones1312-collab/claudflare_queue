@@ -16,4 +16,5 @@ export const SECRETS_DIR = process.env.KAWA_SECRETS || path.join(ROOT, 'secrets'
 export const RUNTIME_DIR = process.env.KAWA_RUNTIME || path.join(os.tmpdir(), 'kawa-runtime');
 /** Generated wrangler configs. They never contain a secret value. */
 export const BUILD_DIR = process.env.KAWA_BUILD || path.join(os.tmpdir(), 'kawa-build');
-export const WRANGLER_BIN = path.join(EDGE_DIR, 'node_modules', '.bin', 'wrangler');
+// D-10 · run the pinned wrangler's JS entry with THIS node binary; never resolve `node` through PATH.
+export const WRANGLER_JS = path.join(EDGE_DIR, 'node_modules', 'wrangler', 'bin', 'wrangler.js');

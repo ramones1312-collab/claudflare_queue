@@ -1,7 +1,8 @@
 /**
- * The generated STAGING configs must be the R4 V1.3.0 configs, semantically, except for the
- * differences listed (and justified) in CHANGELOG_V1_3_1.md. Parsed by the pinned wrangler's own
- * reader, so formatting and comments cannot hide a difference.
+ * F-21 · The generated STAGING configs are the R4 V1.3.0 configs, compared on the FULL normalized
+ * config object (every field wrangler reads), for every STAGING Worker: ingress, both consumers, the
+ * receiver and the admin (R4's own staging-receiver/ and admin-worker/ TOMLs). Every difference must be
+ * in the allow-list below, and each allowed difference is then checked for its exact expected value.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,64 +20,59 @@ const FIX = path.join(ROOT, 'deployer', 'test', 'fixtures');
 const quietly = (fn) => { const w = console.warn, l = console.log; console.warn = console.log = () => {}; try { return fn(); } finally { console.warn = w; console.log = l; } };
 const read = (p) => quietly(() => unstable_readConfig({ config: p }, { hideWarnings: true }));
 
-function shape(c) {
-  return {
-    name: c.name,
-    main: path.basename(c.main || ''),
-    compatibility_date: c.compatibility_date,
-    durable_objects: c.durable_objects,
-    queues: c.queues,
-    services: c.services,
-    vars: c.vars,
-    secrets: c.secrets,
-    exports: c.exports,
-  };
+function diff(a, b, p = '', outList = []) {
+  if (JSON.stringify(a) === JSON.stringify(b)) return outList;
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+    for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) diff(a[k], b[k], p ? `${p}.${k}` : k, outList);
+  } else outList.push(p);
+  return outList;
 }
 
-const generated = async () => {
+const plan = await (async () => {
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'kawa-edge.example.json'), 'utf8'));
   cfg.cloudflare.account_id = '0123456789abcdef0123456789abcdef';
-  const v = await validateConfig(cfg);
-  const plan = renderEnv('staging', v.envs.staging.destinations, EDGE_DIR);
-  writeBuild(plan, fs.mkdtempSync(path.join(os.tmpdir(), 'r4eq-')));
-  return plan;
-};
+  const p = renderEnv('staging', (await validateConfig(cfg)).envs.staging.destinations, EDGE_DIR);
+  writeBuild(p, fs.mkdtempSync(path.join(os.tmpdir(), 'r4eq-')));
+  return p;
+})();
 
-const stripMarkers = (vars) => { const v = { ...vars }; delete v.KAWA_EDGE_MANAGED; delete v.KAWA_EDGE_BUILD; return v; };
+// Always different, by construction: where the file lives, and the absolute main path (same file).
+const LOCATION = ['configPath', 'userConfigPath', 'main'];
+// Documented deltas (CHANGELOG §configs): ownership markers, explicit workers_dev/preview_urls.
+const COMMON = ['vars.KAWA_EDGE_MANAGED', 'vars.KAWA_EDGE_BUILD', 'workers_dev', 'preview_urls'];
 
-test('ingress: identical to R4 wrangler.staging.toml except the two ownership markers', async () => {
-  const plan = await generated();
-  const r4 = shape(read(path.join(FIX, 'wrangler.staging.toml')));
-  const gen = shape(read(plan.workers.find(w => w.role === 'ingress').configPath));
-  assert.match(gen.vars.KAWA_EDGE_MANAGED, /^kawa-edge-nas:staging:ingress$/);
-  assert.match(gen.vars.KAWA_EDGE_BUILD, /^[0-9a-f]{64}$/);
-  gen.vars = stripMarkers(gen.vars);
-  assert.deepEqual(gen, r4);
-});
+const CASES = [
+  { name: 'kawa-edge-ingress-stg', r4: path.join(FIX, 'wrangler.staging.toml'), extra: [] },
+  { name: 'kawa-edge-delivery-hub-a-stg', r4: path.join(FIX, 'wrangler.consumer.hub-a.staging.toml'), extra: ['vars.DESTINATIONS', 'services'], dest: 'HUB_A' },
+  { name: 'kawa-edge-delivery-hub-b-stg', r4: path.join(FIX, 'wrangler.consumer.hub-b.staging.toml'), extra: ['vars.DESTINATIONS', 'services'], dest: 'HUB_B' },
+  { name: 'kawa-staging-receiver-hub-a', r4: path.join(EDGE_DIR, 'staging-receiver', 'wrangler.toml'), extra: ['name', 'topLevelName'] },
+  { name: 'kawa-staging-receiver-hub-b', r4: path.join(EDGE_DIR, 'staging-receiver', 'wrangler.toml'), extra: ['name', 'topLevelName'] },
+  { name: 'kawa-edge-admin-stg', r4: path.join(EDGE_DIR, 'admin-worker', 'wrangler.toml'), extra: [] },
+];
 
-for (const id of ['HUB_A', 'HUB_B']) {
-  test(`consumer ${id}: R4 semantics; documented deltas only`, async () => {
-    const plan = await generated();
-    const file = `wrangler.consumer.${id.toLowerCase().replace('_', '-')}.staging.toml`;
-    const r4 = shape(read(path.join(FIX, file)));
-    const genRaw = read(plan.workers.find(w => w.role === 'consumer' && w.dest === id).configPath);
-    const gen = shape(genRaw);
-    // Delta 1 · each destination has its OWN staging receiver (per-destination outage gates).
-    assert.equal(r4.services[0].service, 'kawa-staging-receiver');
-    assert.equal(gen.services[0].service, `kawa-staging-receiver-${id.toLowerCase().replace('_', '-')}`);
-    assert.equal(gen.services[0].binding, r4.services[0].binding);
-    // Delta 2 · DESTINATIONS carries only this consumer's own entry, byte-equal to R4's entry.
-    const r4Entry = JSON.parse(r4.vars.DESTINATIONS).find(d => d.id === id);
-    assert.deepEqual(JSON.parse(gen.vars.DESTINATIONS), [r4Entry]);
-    // Delta 3 · no public workers.dev URL / preview URLs for a queue consumer.
-    assert.equal(genRaw.workers_dev, false);
-    assert.equal(genRaw.preview_urls, false);
-    // Everything else identical.
-    for (const k of ['name', 'main', 'compatibility_date', 'durable_objects', 'queues', 'secrets', 'exports']) {
-      assert.deepEqual(gen[k], r4[k], k);
+for (const c of CASES) {
+  test(`${c.name}: full config = R4 except the documented deltas`, () => {
+    const w = plan.workers.find(x => x.name === c.name);
+    const gen = read(w.configPath), r4 = read(c.r4);
+    const allowed = new Set([...LOCATION, ...COMMON, ...c.extra]);
+    const d = diff(gen, r4);
+    assert.deepEqual(d.filter(k => !allowed.has(k)), [], `undocumented differences: ${d.filter(k => !allowed.has(k))}`);
+    // main: the same source file. R4's path is relative to where that TOML lived inside edge/
+    // (edge/ for the moved fixtures, edge/staging-receiver/, edge/admin-worker/).
+    const r4Home = c.r4.startsWith(FIX) ? EDGE_DIR : path.dirname(c.r4);
+    assert.equal(gen.main, path.join(r4Home, path.relative(path.dirname(c.r4), r4.main)));
+    assert.ok(fs.existsSync(gen.main));
+    // Each allowed delta has exactly the documented value.
+    assert.match(gen.vars.KAWA_EDGE_MANAGED, /^kawa-edge-nas:staging:/);
+    assert.match(gen.vars.KAWA_EDGE_BUILD, /^[0-9a-f]{64}$/);
+    assert.equal(gen.preview_urls, false);
+    assert.equal(gen.workers_dev, w.role !== 'consumer');     // consumers: no public URL; others: R4's default made explicit
+    if (c.dest) {
+      const slug = c.dest.toLowerCase().replace('_', '-');
+      assert.deepEqual(gen.services, [{ binding: `DEST_${c.dest}_FETCHER`, service: `kawa-staging-receiver-${slug}` }]);
+      assert.deepEqual(r4.services, [{ binding: `DEST_${c.dest}_FETCHER`, service: 'kawa-staging-receiver' }]);
+      assert.deepEqual(JSON.parse(gen.vars.DESTINATIONS), JSON.parse(r4.vars.DESTINATIONS).filter(d2 => d2.id === c.dest));
     }
-    const gv = stripMarkers(gen.vars); delete gv.DESTINATIONS;
-    const rv = { ...r4.vars }; delete rv.DESTINATIONS;
-    assert.deepEqual(gv, rv);
+    if (c.extra.includes('name')) assert.equal(gen.name, c.name);
   });
 }

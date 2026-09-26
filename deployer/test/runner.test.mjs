@@ -74,16 +74,16 @@ test('gate L proof: the latest deployment id changes on every deploy; unknown sc
   } finally { await mock.close(); }
 });
 
-test('queue backlog: a GraphQL permission error is UNKNOWN (null), not 0; rows are read', async () => {
+test('queue backlog: a permission error is unreadable, no rows is unknown (never 0), rows are read', async () => {
   const mock = createMockCloudflare({ token: 'tok_' + 'x'.repeat(30), accountId: '0'.repeat(32) });
   const base = await mock.listen();
   try {
     const api = createCfApi({ token: 'tok_' + 'x'.repeat(30), accountId: '0'.repeat(32), base });
-    assert.equal(await api.queueBacklog('q1'), null);
+    assert.deepEqual(await api.queueBacklog('q1'), { readable: false, value: null });   // permission error: unknown
     mock.state.analytics = [{ avg: { messages: 3 } }];
-    assert.equal(await api.queueBacklog('q1'), 3);
+    assert.deepEqual(await api.queueBacklog('q1'), { readable: true, value: 3 });
     mock.state.analytics = [];
-    assert.equal(await api.queueBacklog('q1'), 0);
+    assert.deepEqual(await api.queueBacklog('q1'), { readable: true, value: null });   // E-08: no rows is not 0
   } finally { await mock.close(); }
 });
 
@@ -94,4 +94,17 @@ test('a secret split across two output chunks is still redacted as a whole', () 
   sink.push('prefix split-secret-VAL'); sink.push('UE-1234567890 suffix\nnext line'); sink.flush();
   assert.deepEqual(lines, ['prefix [REDACTED] suffix', 'next line']);
   assert.equal(lines.join('').includes(secret.slice(0, 10)), false);
+});
+
+import { CLOUD_GATE_IDS, defineGates } from '../lib/gates/run.mjs';
+
+test('E-07 · a run with zero gates is FAIL, never a vacuous PASS', async () => {
+  const g = await run(fakeTarget('cloud'), []);
+  assert.equal(g.result, 'FAIL');
+});
+
+test('F-04 · the gate list PROD requires is the one defined in code', () => {
+  const ids = defineGates({ X: 'HUB_A', Y: 'HUB_B', kind: 'cloud', includeLong: true }).map(g => g.id);
+  assert.deepEqual(ids, [...CLOUD_GATE_IDS]);
+  assert.equal(Object.isFrozen(CLOUD_GATE_IDS), true);
 });

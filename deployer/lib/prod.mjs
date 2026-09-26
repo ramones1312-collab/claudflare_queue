@@ -15,10 +15,13 @@ import { out, KawaError, redact } from './log.mjs';
 import { createWrangler } from './wrangler.mjs';
 import { localChecks, cloudChecks, requiredSecrets } from './preflight.mjs';
 import { execute, loadDeployed } from './deploy.mjs';
-import { renderEnv, stagingBindingHash } from './render.mjs';
+import { renderEnv, writeBuild } from './render.mjs';
+import { bindingHash, readEvidence, verify as verifySignature } from './evidence.mjs';
+import { CLOUD_GATE_IDS } from './gates/run.mjs';
+import { edgeRegistry, runtimeDestinations } from './config.mjs';
 import { pinnedVersion } from './wrangler.mjs';
 import { names, MANAGED_VAR, BUILD_VAR } from './naming.mjs';
-import { EDGE_DIR, STATE_DIR } from './paths.mjs';
+import { EDGE_DIR, STATE_DIR, BUILD_DIR } from './paths.mjs';
 import { validateHaltUrl, promptHidden, promptLine, validateWebhookUrl, checkAndRecordFingerprint, randomToken, loadStagingSecrets, deleteStagingSecrets } from './secrets.mjs';
 import { cloudContext, writeReport, hubHostsOf } from './commands.mjs';
 
@@ -68,7 +71,7 @@ export async function status(ctx, f) {
   out.step(`Resources · ${env.toUpperCase()}`);
   const { rows } = await inspect(env, cfg, cloud.api);
   for (const r of rows) {
-    const line = `${r.state.padEnd(14)} ${r.kind.padEnd(6)} ${r.name}${r.secrets && r.secrets.length ? '  [' + r.secrets.join(' ') + ']' : ''}${r.consumers ? `  consumers: ${r.consumers.join(',') || '-'}` : ''}${r.backlog !== undefined && r.backlog !== null ? `  backlog≈${r.backlog}` : ''}`;
+    const line = `${r.state.padEnd(14)} ${r.kind.padEnd(6)} ${r.name}${r.secrets && r.secrets.length ? '  [' + r.secrets.join(' ') + ']' : ''}${r.consumers ? `  consumers: ${r.consumers.join(',') || '-'}` : ''}${r.backlog && r.backlog.readable && r.backlog.value !== null ? `  backlog≈${r.backlog.value}` : ''}`;
     (r.state === 'CURRENT' || r.state === 'OK' ? out.ok : out.fail)(line);
   }
   let seq = null;
@@ -119,37 +122,125 @@ export async function stagingTeardown(ctx, f) {
   }
   const order = [...plan.workers.filter(w => w.role === 'admin' || w.role === 'consumer'), ...plan.workers.filter(w => w.role === 'ingress'), ...plan.workers.filter(w => w.role === 'receiver')];
   for (const w of order) if (scripts.has(w.name)) { await cloud.wrangler.deleteWorker(w.name); out.ok(`deleted ${w.name}`); }
-  if (f.queues) for (const q of plan.queues) { try { await cloud.wrangler.deleteQueue(q.name); out.ok(`deleted queue ${q.name}`); } catch (err) { out.warn(`${q.name}: ${err.message}`); } }
+  if (f.queues) {
+    const byName = new Map((await cloud.api.listQueues()).map(q => [q.queue_name, q]));
+    for (const q of plan.queues) {
+      const found = byName.get(q.name);
+      if (!found) continue;
+      // D-08 · after our Workers are gone nothing may still be attached; anything left is not ours.
+      const d = await cloud.api.queue(found.queue_id);
+      const attached = [...(d.consumers || []), ...(d.producers || [])].map(x => x.script || x.script_name || x.type);
+      if (attached.length) { out.warn(`${q.name}: still attached to ${attached.join(',')}; NOT deleted`); continue; }
+      try { await cloud.wrangler.deleteQueue(q.name); out.ok(`deleted queue ${q.name}`); } catch (err) { out.warn(`${q.name}: ${err.message}`); }
+    }
+  }
   deleteStagingSecrets();
   fs.rmSync(path.join(STATE_DIR, 'staging', 'deployed.json'), { force: true });
   return { result: 'PASS', detail: `STAGING Workers deleted${f.queues ? ' and queues' : ' (queues kept; --queues to delete them)'}`, report: file };
 }
 
-/** The newest Cloudflare STAGING run that passed EVERY mandatory gate for exactly this binding. */
-function latestStagingPass(binding) {
+/**
+ * THE gate in front of every PROD write (prod-deploy, add-hub --env prod, cutover): the newest
+ * Cloudflare STAGING run that
+ *   - is signed by this installation (not hand-written, edited or copied in),
+ *   - passed EVERY gate of the list fixed in code (CLOUD_GATE_IDS), with no cleanup error,
+ *   - verified the DLQ record on the platform (gate G) and a real redispatch (gate K),
+ *   - is bound to exactly this deployer + Edge code + lockfile + wrangler (bindingHash),
+ *   - ran on the same Cloudflare account,
+ *   - gate-tested every PROD destination with the same runtime settings (timeout, retry).
+ * Returns { pass } or { reasons } — never throws on a corrupt file.
+ */
+export async function findStagingPass(cfg, { prodDests = null } = {}) {
   const dir = path.join(STATE_DIR, 'evidence');
-  if (!fs.existsSync(dir)) return null;
+  const reasons = [];
+  if (!fs.existsSync(dir)) return { reasons: ['no evidence directory'] };
+  const binding = currentBinding();
+  const reg = await edgeRegistry();
+  const parse = (list) => Object.fromEntries(reg.allDestinations({ DESTINATIONS: JSON.stringify(runtimeDestinations(list)) }).map(d => [d.id, { timeout_ms: d.timeout_ms, retry: d.retry, enabled: d.enabled }]));
+  const wantProd = prodDests || (cfg.envs.prod ? cfg.envs.prod.destinations : []);
   const files = fs.readdirSync(dir).filter(n => /^staging-gates-cloud-.*-PASS\.json$/.test(n)).sort().reverse();
   for (const n of files) {
-    const e = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
-    const mandatory = e.mandatory_gates || [];
-    const passed = new Set((e.gates || []).filter(g => g.status === 'PASS').map(g => g.id));
-    if (e.result === 'PASS' && e.target === 'cloud' && e.binding_sha256 === binding &&
-        mandatory.length > 0 && mandatory.every(id => passed.has(id)) && passed.has('K')) return { file: n, e };
+    const e = readEvidence(path.join(dir, n));
+    const why = [];
+    if (!e) { reasons.push(`${n}: unreadable`); continue; }
+    if (!verifySignature(e)) why.push('not signed by this installation');
+    if (e.result !== 'PASS' || e.target !== 'cloud') why.push('not a Cloudflare PASS');
+    if ((e.cleanup_errors || []).length) why.push('cleanup errors');
+    const byId = new Map((e.gates || []).map(g => [g.id, g]));
+    const missing = CLOUD_GATE_IDS.filter(id => !byId.has(id) || byId.get(id).status !== 'PASS');
+    if (missing.length) why.push(`gates not PASS: ${missing.join(',')}`);
+    const g = byId.get('G');
+    if (!(g && g.evidence && g.evidence.dlq && g.evidence.dlq.verified === true)) why.push('DLQ record not platform-verified (gate G; needs Account Analytics: Read)');
+    const k = byId.get('K');
+    if (!(k && k.evidence && k.evidence.dispatch_attempts >= 2)) why.push('no redispatch proven (gate K)');
+    if (e.binding_sha256 !== binding) why.push('different deployer/Edge/wrangler build');
+    if (e.account_id !== cfg.account_id) why.push('different Cloudflare account');
+    try {
+      const tested = parse(e.destinations_config || []);
+      for (const [id, d] of Object.entries(parse(wantProd))) {
+        const t = tested[id];
+        if (!t) why.push(`${id} was never gate-tested in STAGING`);
+        else if (JSON.stringify([t.timeout_ms, t.retry]) !== JSON.stringify([d.timeout_ms, d.retry])) why.push(`${id}: PROD timeout/retry differ from what STAGING tested`);
+      }
+    } catch (err) { why.push(`destinations: ${err.code || err.message}`); }
+    if (!why.length) return { pass: { file: n, e } };
+    reasons.push(`${n}: ${why.join('; ')}`);
   }
-  return null;
+  if (!files.length) reasons.push('no Cloudflare STAGING PASS evidence');
+  return { reasons };
 }
-const currentBinding = () => stagingBindingHash(EDGE_DIR, pinnedVersion());
+
+/** Live corroboration: STAGING on Cloudflare still runs exactly the builds the gates certified. */
+export async function corroborate(pass, api) {
+  const bad = [];
+  for (const [name, build] of Object.entries(pass.e.builds || {})) {
+    const s = await api.scriptSettings(name);
+    const vars = Object.fromEntries(((s && s.bindings) || []).filter(b => b.type === 'plain_text').map(b => [b.name, b.text]));
+    if (vars[BUILD_VAR] !== build) bad.push(name);
+  }
+  if (!Object.keys(pass.e.builds || {}).length) bad.push('(evidence lists no builds)');
+  return bad;
+}
+
+export async function requireStagingPass(cfg, api, opts = {}) {
+  const f = await findStagingPass(cfg, opts);
+  if (!f.pass) {
+    for (const r of f.reasons.slice(0, 5)) out.info(`   ${r}`);
+    return { blocked: `no complete, signed Cloudflare STAGING PASS for this build and these destinations (${currentBinding().slice(0, 12)}…). Run ./kawa-edge install.` };
+  }
+  const bad = await corroborate(f.pass, api);
+  if (bad.length) return { blocked: `STAGING on Cloudflare no longer runs the certified builds (${bad.join(', ')}). Keep STAGING deployed and re-run ./kawa-edge install.` };
+  out.ok(`STAGING PASS (signed, all ${CLOUD_GATE_IDS.length} gates, corroborated on Cloudflare): ${f.pass.file}`);
+  return { pass: f.pass };
+}
+const currentBinding = () => bindingHash(pinnedVersion());
+
+/**
+ * F-10 · Redeploying an EXISTING PROD ingress restarts the Sequencer Durable Object. An alert that
+ * arrives during that restart may get a 503, and TradingView does not retry: that alert would be lost
+ * for every Hub. Never done silently.
+ */
+export async function confirmIngressRedeploy(f) {
+  out.warn('Redeploying the PROD ingress restarts the Sequencer. An alert arriving during the restart can be answered 503,');
+  out.warn('and TradingView does NOT retry it: it would be lost for EVERY Hub. Do it only when no alert is expected.');
+  if (f['confirm-ingress-redeploy'] === 'REDEPLOY PROD INGRESS') return;
+  const a = await promptLine('Type REDEPLOY PROD INGRESS to continue: ');
+  if (a !== 'REDEPLOY PROD INGRESS') throw new KawaError('INGRESS_REDEPLOY_NOT_CONFIRMED', 'PROD ingress redeploy not confirmed; nothing was changed');
+}
 
 export async function prodDeploy(ctx, f) {
   const cfg = await loadConfig(ctx.configFile);
   if (!cfg.envs.prod) throw new KawaError('CONFIG_NO_ENV', 'config has no "prod" section');
-  const src = currentBinding();
-  const pass = latestStagingPass(src);
-  if (!pass) return { result: 'BLOCKED', detail: `no complete Cloudflare STAGING PASS for this Edge code + renderer + wrangler (${src.slice(0, 12)}…). Run ./kawa-edge install first.` };
-  out.ok(`STAGING PASS evidence (all mandatory gates) for this exact build: ${pass.file}`);
+  const offline = await findStagingPass(cfg);
+  if (!offline.pass) {
+    for (const r of offline.reasons.slice(0, 5)) out.info(`   ${r}`);
+    return { result: 'BLOCKED', detail: 'no complete, signed Cloudflare STAGING PASS for this build and these destinations. Run ./kawa-edge install first.' };
+  }
   const local = await localChecks({ cfg, env: 'prod', wrangler: createWrangler({ quiet: true }), inContainer: !!process.env.KAWA_IN_CONTAINER });
   const cloud = await cloudContext(cfg);
+  const gate = await requireStagingPass(cfg, cloud.api);
+  if (!gate.pass) return { result: 'BLOCKED', detail: gate.blocked };
+  const pass = gate.pass;
   const pre = await cloudChecks({ env: 'prod', plan: local.plan, api: cloud.api, stateDeployed: loadDeployed('prod') });
 
   const secrets = {};
@@ -179,10 +270,11 @@ export async function prodDeploy(ctx, f) {
     }
   }
   if (secrets.ingress && ingressA.action === 'UNCHANGED') ingressA.action = 'UPDATE';
+  if (ingressA.action === 'UPDATE') await confirmIngressRedeploy(f);
   const done = await execute({ env: 'prod', actions: pre.actions, api: cloud.api, wrangler: cloud.wrangler,
                                secretsFor: (w) => (w.role === 'ingress' ? secrets.ingress : secrets[w.dest]) || null });
   for (const c of commits) c();
-  const file = writeReport('prod-deploy', { applied: done, staging_pass: pass.file, binding_sha256: src });
+  const file = writeReport('prod-deploy', { applied: done, staging_pass: pass.file, binding_sha256: currentBinding() });
   out.ok('PROD Edge deployed INERT: no alert reaches it until TradingView is pointed at it (cutover).');
   out.info('TradingView still posts DIRECTLY to HUB_A. Tunnel, hostname and HUB_A untouched.');
   out.warn('Next: hub-check (BLOCKED by B-2) and cutover-check (BLOCKED by B-1, B-2).');
@@ -205,16 +297,22 @@ export async function cutoverCheck(ctx, f) {
   const checks = [];
   const add = (id, title, status, detail) => { checks.push({ id, title, status, detail }); (status === 'PASS' ? out.ok : status === 'MANUAL' ? out.warn : out.fail)(`${id.padEnd(4)} ${status.padEnd(8)} ${title}${detail ? ' — ' + detail : ''}`); };
   out.step('Cutover preconditions (nothing is changed)');
-  const pass = latestStagingPass(currentBinding());
-  add('C1', 'STAGING PASS on Cloudflare (all mandatory gates) for this exact build', pass ? 'PASS' : 'FAIL', pass ? pass.file : 'run ./kawa-edge install');
-  if (f.offline || !cfg.envs.prod) add('C2', 'PROD Edge deployed, managed, current, secrets set', 'UNKNOWN', f.offline ? '--offline' : 'no prod section');
+  const found = await findStagingPass(cfg);
+  let pass = found.pass || null;
+  let cloud = null;
+  if (!f.offline && cfg.envs.prod) cloud = await cloudContext(cfg);
+  if (pass && cloud) { const bad = await corroborate(pass, cloud.api); if (bad.length) { pass = null; found.reasons = [`STAGING no longer runs the certified builds: ${bad.join(', ')}`]; } }
+  add('C1', 'STAGING PASS on Cloudflare (signed, all gates, corroborated) for this exact build', pass ? (cloud ? 'PASS' : 'UNKNOWN') : 'FAIL',
+      pass ? `${pass.file}${cloud ? '' : ' (not corroborated: --offline)'}` : (found.reasons[0] || 'run ./kawa-edge install'));
+  if (!cloud) add('C2', 'PROD Edge deployed, managed, current, secrets set', 'UNKNOWN', f.offline ? '--offline' : 'no prod section');
   else {
-    const cloud = await cloudContext(cfg);
     const { rows } = await inspect('prod', cfg, cloud.api);
     const bad = rows.filter(r => !['CURRENT', 'OK'].includes(r.state));
     add('C2', 'PROD Edge deployed, managed, current, secrets set', bad.length ? 'FAIL' : 'PASS', bad.length ? bad.map(r => `${r.name}:${r.state}`).join(', ') : `${rows.length} resources current`);
     const backlog = rows.filter(r => r.kind === 'queue').map(r => r.backlog);
-    add('C6', 'PROD queues clean / known', backlog.some(b => b === null) ? 'UNKNOWN' : backlog.every(b => b === 0) ? 'PASS' : 'FAIL', backlog.some(b => b === null) ? 'backlog metric needs "Account Analytics: Read"' : `backlog ${backlog.join(',')}`);
+    const unknown = backlog.some(b => !b || !b.readable || b.value === null);
+    add('C6', 'PROD queues clean / known', unknown ? 'UNKNOWN' : backlog.every(b => b.value === 0) ? 'PASS' : 'FAIL',
+        unknown ? 'backlog not readable or no sample (needs "Account Analytics: Read")' : `backlog ${backlog.map(b => b.value).join(',')}`);
   }
   add('C3', 'Edge -> HUB_A transport + auth PASS (non-trading)', 'BLOCKED', `B-2: ${BLOCKERS['B-2'].title}`);
   add('C4', 'PROD retry / skip / FAILED_PERMANENT / rollback-readiness path', 'BLOCKED', `B-1: ${BLOCKERS['B-1'].title}`);
@@ -232,19 +330,29 @@ export async function cutover(ctx, f) {
     out.fail('Cutover refused. TradingView stays on the direct HUB_A webhook. Nothing was changed.');
     return { result: 'BLOCKED', detail: res.detail, report: res.report };
   }
-  // Unreachable while B-1/B-2 stand; kept so the procedure is reviewable. See RUNBOOK_VIGENTE §7.
+  // Unreachable while B-1/B-2 stand; the rotation itself is tested directly (rotateProdPathToken).
+  const cfg = await loadConfig(ctx.configFile);
+  await localChecks({ cfg, env: 'prod', wrangler: createWrangler({ quiet: true }), dryRun: false, inContainer: !!process.env.KAWA_IN_CONTAINER });  // H-15 · manifest re-verified
+  const green = await promptLine('C5 · Type HUB_A IS GREEN after checking the Hub UI (8180) yourself: ');
+  if (green !== 'HUB_A IS GREEN') return { result: 'BLOCKED', detail: 'HUB_A GREEN not attested' };
   const phrase = await promptLine('Type exactly "CUTOVER HUB_A APPROVED" (owner): ');
   if (phrase !== 'CUTOVER HUB_A APPROVED') return { result: 'BLOCKED', detail: 'owner approval not given' };
-  const cfg = await loadConfig(ctx.configFile);
   const cloud = await cloudContext(cfg);
+  const { url } = await rotateProdPathToken(cfg, cloud);
+  process.stdout.write(`\n  TradingView webhook URL (shown ONCE, not logged):\n  ${url}\n\n`);
+  return { result: 'PASS', detail: 'PROD path token rotated; paste the URL in TradingView now' };
+}
+
+/** Rotates the PROD ingress path token (same build, new secret) and returns the new webhook URL. */
+export async function rotateProdPathToken(cfg, cloud) {
   const plan = renderEnv('prod', cfg.envs.prod.destinations, EDGE_DIR);
+  writeBuild(plan, BUILD_DIR);                                        // F-13 · the config must exist on disk
   const ingress = plan.workers.find(w => w.role === 'ingress');
   const token = randomToken();
   const { withSecretsFile } = await import('./secrets.mjs');
   await withSecretsFile({ WEBHOOK_PATH_TOKEN: token }, (file) => cloud.wrangler.deploy(ingress.configPath, file));
   const sub = await cloud.api.subdomain();
-  process.stdout.write(`\n  TradingView webhook URL (shown ONCE, not logged):\n  https://${ingress.name}.${sub}.workers.dev/webhook/${token}\n\n`);
-  return { result: 'PASS', detail: 'PROD path token rotated; paste the URL in TradingView now' };
+  return { url: `https://${ingress.name}.${sub}.workers.dev/webhook/${token}`, token };
 }
 
 export async function rollbackTransport() {

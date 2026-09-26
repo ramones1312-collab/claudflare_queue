@@ -51,15 +51,23 @@ export function createCfApi({ token, accountId, base = apiBase() }) {
     return json;
   }
 
+  /**
+   * F-09 · Page until the API says we have everything: a short page is NOT the end (Cloudflare may cap
+   * per_page below what we ask). Stops on an empty page, on total_pages/total_count, or at 1000 pages.
+   */
   async function paged(path, perm) {
     const outList = [];
-    for (let page = 1; page < 100; page++) {
+    for (let page = 1; page <= 1000; page++) {
       const sep = path.includes('?') ? '&' : '?';
       const j = await call('GET', `${path}${sep}page=${page}&per_page=100`, { perm });
       const list = Array.isArray(j.result) ? j.result : [];
       outList.push(...list);
-      const info = j.result_info;
-      if (!info || list.length === 0 || outList.length >= (info.total_count ?? outList.length) || list.length < 100) break;
+      const info = j.result_info || {};
+      if (!list.length) break;
+      if (info.total_pages !== undefined && page >= info.total_pages) break;
+      if (info.total_count !== undefined && outList.length >= info.total_count) break;
+      if (info.total_pages === undefined && info.total_count === undefined && info.per_page !== undefined && list.length < info.per_page) break;
+      if (!j.result_info) break;                                // unpaginated endpoint
     }
     return outList;
   }
@@ -79,7 +87,9 @@ export function createCfApi({ token, accountId, base = apiBase() }) {
         throw err;
       }
     },
-    listScripts: async () => (await call('GET', `${A}/workers/scripts`, { perm: 'scripts' })).result || [],
+    listScripts: async () => paged(`${A}/workers/scripts`, 'scripts'),
+    /** F-08 · authoritative per-name existence check (a list can be incomplete). */
+    async scriptExists(name) { return (await call('GET', `${A}/workers/scripts/${encodeURIComponent(name)}/settings`, { perm: 'scripts', allow404: true })) !== null; },
     async scriptSettings(name) {
       const j = await call('GET', `${A}/workers/scripts/${encodeURIComponent(name)}/settings`, { perm: 'scripts', allow404: true });
       return j ? j.result : null;
@@ -104,18 +114,21 @@ export function createCfApi({ token, accountId, base = apiBase() }) {
     listQueues: () => paged(`${A}/queues`, 'queues'),
     async queue(id) { return (await call('GET', `${A}/queues/${id}`, { perm: 'queues' })).result; },
     async createQueue(name) { return (await call('POST', `${A}/queues`, { body: { queue_name: name }, perm: 'queues' })).result; },
-    /** Best-effort backlog of one queue via GraphQL Analytics; null when the permission is absent. */
+    /**
+     * Backlog of one queue via GraphQL Analytics: { readable, value }. readable=false: permission
+     * missing or API error (GraphQL answers HTTP 200 + errors). value=null: readable but no sample in
+     * the window — unknown, never assumed 0 (audit E-08).
+     */
     async queueBacklog(queueId) {
       const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
       const query = `query($a:String!,$q:String!,$s:Time!){viewer{accounts(filter:{accountTag:$a}){queueBacklogAdaptiveGroups(limit:1,filter:{queueId:$q,datetime_geq:$s},orderBy:[datetimeMinute_DESC]){avg{messages}}}}}`;
       try {
         const j = await call('POST', '/graphql', { body: { query, variables: { a: accountId, q: queueId, s: since } }, perm: 'analytics' });
-        // GraphQL reports a missing permission as HTTP 200 + errors: that is UNKNOWN (null), never 0.
-        if (!j || (j.errors && j.errors.length) || !j.data || !j.data.viewer || !(j.data.viewer.accounts || []).length) return null;
+        if (!j || (j.errors && j.errors.length) || !j.data || !j.data.viewer || !(j.data.viewer.accounts || []).length) return { readable: false, value: null };
         const rows = j.data.viewer.accounts[0].queueBacklogAdaptiveGroups;
-        if (!Array.isArray(rows)) return null;
-        return rows.length ? Number(rows[0].avg.messages) : 0;   // a successful query with no rows = empty
-      } catch { return null; }
+        if (!Array.isArray(rows)) return { readable: false, value: null };
+        return { readable: true, value: rows.length ? Number(rows[0].avg.messages) : null };
+      } catch { return { readable: false, value: null }; }
     },
   };
 }

@@ -19,7 +19,9 @@ export function createMockCloudflare(opts = {}) {
     tokenStatus: opts.tokenStatus || 'active',
     subdomain: opts.subdomain === undefined ? 'kawa-mock' : opts.subdomain,
     denyWrite: new Set(opts.denyWrite || []),
-    analytics: opts.analytics || null,               // rows for queueBacklogAdaptiveGroups; null = permission absent        // e.g. ['queues'] to simulate a missing permission
+    analytics: opts.analytics || null,
+    pageSize: opts.pageSize || 50,                   // Cloudflare may serve fewer than asked
+    hideFromList: new Set(opts.hideFromList || []), // exists, but the listing does not show it (F-08)               // rows for queueBacklogAdaptiveGroups; null = permission absent        // e.g. ['queues'] to simulate a missing permission
     queues: new Map(),                                // name -> queue
     scripts: new Map(),                               // name -> script
     journal: [],
@@ -39,6 +41,13 @@ export function createMockCloudflare(opts = {}) {
     return q;
   }
 
+  /** Cloudflare-style pagination; the server may cap per_page below what the client asks. */
+  function pageOf(list, url) {
+    const per = Math.min(Number(url.searchParams.get('per_page') || state.pageSize), state.pageSize);
+    const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+    const slice = list.slice((page - 1) * per, page * per);
+    return [slice, { result_info: { page, per_page: per, count: slice.length, total_count: list.length, total_pages: Math.max(1, Math.ceil(list.length / per)) } }];
+  }
   const ok = (res, result, extra = {}) => send(res, 200, { success: true, errors: [], messages: [], result, ...extra });
   const fail = (res, status, code, message) => send(res, status, { success: false, errors: [{ code, message }], messages: [], result: null });
   function send(res, status, payload) {
@@ -149,7 +158,7 @@ export function createMockCloudflare(opts = {}) {
       const name = url.searchParams.get('name');
       let list = [...state.queues.values()];
       if (name) list = list.filter(q => q.queue_name === name);
-      return ok(res, list, { result_info: { page: 1, per_page: 100, count: list.length, total_count: list.length, total_pages: 1 } });
+      return ok(res, ...pageOf(list, url));
     }
     if (sub === '/queues' && req.method === 'POST') {
       if (state.denyWrite.has('queues')) return fail(res, 403, 10000, 'Authentication error');
@@ -200,7 +209,8 @@ export function createMockCloudflare(opts = {}) {
 
     // ---- workers ---------------------------------------------------------------------------
     if (sub === '/workers/scripts' && req.method === 'GET') {
-      return ok(res, [...state.scripts.values()].map(scriptView));
+      const visible = [...state.scripts.values()].filter(x => !state.hideFromList.has(x.name));
+      return ok(res, ...pageOf(visible.map(scriptView), url));
     }
     if (sub === '/workers/durable_objects/namespaces' && req.method === 'GET') {
       const out = [];

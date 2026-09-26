@@ -21,14 +21,45 @@ export async function world(opts = {}) {
 }
 
 
-export async function fakeStagingPass(sb, { skip = null } = {}) {
-  // Evidence as `install` writes it after a Cloudflare STAGING PASS (only the fields prod-deploy reads).
-  const { stagingBindingHash } = await import('../../lib/render.mjs');
-  const { EDGE_DIR } = await import('../../lib/paths.mjs');
+/**
+ * A STAGING PASS exactly as `install` would record it, SIGNED with the sandbox's own evidence key and
+ * listing the builds that STAGING really runs in the mock (so live corroboration can succeed).
+ * `tamper` lets a test break one property at a time.
+ */
+export async function fakeStagingPass(sb, mock, tamper = {}) {
+  const crypto = await import('node:crypto');
+  const { canonical, bindingHash } = await import('../../lib/evidence.mjs');
   const { pinnedVersion } = await import('../../lib/wrangler.mjs');
-  const ids = ['G00', 'A', 'C', 'E', 'D', 'F', 'M', 'ISO-X', 'ISO-Y', 'ISO-XY', 'G', 'H', 'I', 'J', 'L', 'K', 'BYTE', 'RB'];
+  const { CLOUD_GATE_IDS } = await import('../../lib/gates/run.mjs');
+  const { runtimeDestinations } = await import('../../lib/config.mjs');
+  const cfg = sb.config();
+  const builds = {};
+  for (const [name, s] of mock.state.scripts) {
+    if (!/-stg$|^kawa-staging-receiver-/.test(name)) continue;
+    const b = (s.bindings || []).find(x => x.name === 'KAWA_EDGE_BUILD');
+    if (b) builds[name] = b.text;
+  }
+  const gates = CLOUD_GATE_IDS.map(id => ({ id, status: id === tamper.skip ? 'SKIPPED' : 'PASS',
+    evidence: id === 'G' ? { dlq: { verified: !tamper.dlqUnverified } } : id === 'K' ? { dispatch_attempts: tamper.noRedispatch ? 1 : 2 } : {} }));
+  const ev = { result: 'PASS', target: 'cloud', cleanup_errors: tamper.cleanup ? ['resume failed'] : [],
+    binding_sha256: tamper.binding || bindingHash(pinnedVersion()), account_id: tamper.account || cfg.cloudflare.account_id,
+    destinations_config: runtimeDestinations(tamper.destinations || cfg.staging.destinations),
+    builds: tamper.builds || builds, gates, mandatory_gates: tamper.mandatory || CLOUD_GATE_IDS };
+  const keyFile = path.join(sb.stateDir, '.evidence-key');
+  if (!fs.existsSync(keyFile)) fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+  const key = Buffer.from(fs.readFileSync(keyFile, 'utf8').trim(), 'hex');
+  const signed = tamper.unsigned ? ev : { ...ev, signature: { alg: 'HMAC-SHA256', key_id: 'test',
+    value: crypto.createHmac('sha256', key).update(canonical(ev)).digest('hex') } };
   const dir = path.join(sb.stateDir, 'evidence');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'staging-gates-cloud-2026-09-26T00-00-00-000Z-PASS.json'),
-    JSON.stringify({ result: 'PASS', target: 'cloud', binding_sha256: stagingBindingHash(EDGE_DIR, pinnedVersion()), mandatory_gates: ids, gates: ids.map(id => ({ id, status: id === skip ? 'SKIPPED' : 'PASS' })) }));
+  fs.writeFileSync(path.join(dir, 'staging-gates-cloud-2026-09-26T00-00-00-000Z-PASS.json'), JSON.stringify(signed));
+}
+
+/** STAGING deployed in the mock (what a real install leaves), then a signed PASS for it. */
+export async function stagingPassed(w, tamper = {}) {
+  const { runCli } = await import('./cli-harness.mjs');
+  w.sb.dropToken();
+  const r = await runCli(w.sb, w.api, ['install', '--no-gates']);
+  if (r.code !== 2) throw new Error('staging install failed: ' + r.text.slice(-500));
+  await fakeStagingPass(w.sb, w.mock, tamper);
 }

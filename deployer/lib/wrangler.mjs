@@ -5,7 +5,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { WRANGLER_BIN, EDGE_DIR, RUNTIME_DIR, BUILD_DIR } from './paths.mjs';
+import { WRANGLER_JS, EDGE_DIR, RUNTIME_DIR, BUILD_DIR } from './paths.mjs';
 import { out, redact, KawaError } from './log.mjs';
 import { apiBase } from './cfapi.mjs';
 
@@ -51,7 +51,7 @@ export function createWrangler({ token, accountId, quiet = false } = {}) {
     return new Promise((resolve, reject) => {
       // cwd = the build dir: wrangler's .wrangler/ scratch lands on tmpfs, never in the image.
       fs.mkdirSync(BUILD_DIR, { recursive: true });
-      const child = spawn(WRANGLER_BIN, args, { cwd: BUILD_DIR, env: env(), stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, [WRANGLER_JS, ...args], { cwd: BUILD_DIR, env: env(), stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '', stderr = '';
       const emit = (line) => { if (!quiet && line.trim()) out.info('   │ ' + redact(line)); };
       const sinks = { out: lineSink(emit), err: lineSink(emit) };

@@ -44,7 +44,8 @@ export const MAIN = {
 /** Build digest = config text (without the digest line) + the exact bytes of the Worker's sources. */
 function withBuild(role, text, edgeDir) {
   const h = crypto.createHash('sha256');
-  h.update(text);
+  // D-09 · the digest must not depend on WHERE the package is installed (/opt/kawa vs a checkout).
+  h.update(text.split(edgeDir).join('<EDGE_DIR>'));
   for (const f of SOURCES[role]) { h.update('\0' + f + '\0'); h.update(fs.readFileSync(path.join(edgeDir, f))); }
   const digest = h.digest('hex');
   return { text: text.replace('__BUILD__', digest), build: digest };
@@ -265,16 +266,3 @@ export function edgeSourcesHash(edgeDir) {
   return h.digest('hex');
 }
 
-/**
- * What a STAGING PASS certifies for PROD: the Edge code, the config renderer (retries, batch size,
- * compatibility date, per-consumer DESTINATIONS) and the pinned wrangler that bundles and uploads.
- * Change any of them and an old STAGING PASS no longer authorises PROD.
- */
-export function stagingBindingHash(edgeDir, wranglerVersion) {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const h = crypto.createHash('sha256');
-  h.update(edgeSourcesHash(edgeDir));
-  for (const f of ['render.mjs', 'naming.mjs']) h.update(fs.readFileSync(path.join(here, f)));
-  h.update(`wrangler@${wranglerVersion}`);
-  return h.digest('hex');
-}

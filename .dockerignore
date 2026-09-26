@@ -18,3 +18,4 @@ build
 *.sha256
 .claude
 config/*.tmp-*
+delivery

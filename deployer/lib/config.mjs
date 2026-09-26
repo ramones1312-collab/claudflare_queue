@@ -24,6 +24,8 @@ export const HARD_LOCKS = Object.freeze({
 
 const DEST_KEYS = new Set(['id', 'enabled', 'timeout_ms', 'retry']);
 const PROD_EXTRA_KEYS = new Set(['webhook_host']);
+/** Registrable domain (last two labels). Conservative on purpose: stricter than a public-suffix list. */
+export const domainOf = (h) => String(h).replace(/\.$/, '').toLowerCase().split('.').slice(-2).join('.');
 const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 let registry = null;
@@ -74,8 +76,10 @@ async function validateDestinations(env, list, where) {
       if (d.id === 'HUB_A' && d.webhook_host !== HARD_LOCKS.HUB_A_PUBLIC_HOST) {
         throw new KawaError('HARD_LOCK_HUB_A_HOST', `prod: HUB_A webhook_host must be ${HARD_LOCKS.HUB_A_PUBLIC_HOST} (hard lock)`);
       }
-      if (d.id !== 'HUB_A' && String(d.webhook_host).replace(/\.$/, '') === HARD_LOCKS.HUB_A_PUBLIC_HOST) {
-        throw new KawaError('HARD_LOCK_HUB_A_HOST', `prod: ${d.id} cannot point at HUB_A's ingress host (${HARD_LOCKS.HUB_A_PUBLIC_HOST})`);
+      // F-07 · not just the exact host: nothing else may point anywhere in HUB_A's domain (its zone and
+      // tunnel may expose other services, including a control-plane alias).
+      if (d.id !== 'HUB_A' && domainOf(d.webhook_host) === domainOf(HARD_LOCKS.HUB_A_PUBLIC_HOST)) {
+        throw new KawaError('HARD_LOCK_HUB_A_HOST', `prod: ${d.id} cannot point into HUB_A's domain (${domainOf(HARD_LOCKS.HUB_A_PUBLIC_HOST)})`);
       }
     }
   }

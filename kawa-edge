@@ -10,25 +10,37 @@ if docker compose version >/dev/null 2>&1; then DC="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then DC="docker-compose"
 else echo "ERROR: docker compose not found. Install 'Container Manager' from the DSM Package Center." >&2; exit 1; fi
 
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+if [ "${1:-}" = "verify-zip" ]; then
+  # Read-only integrity check of the delivered ZIP, before anything else:
+  #   ./kawa-edge verify-zip <zip> [expected-sha256]      (uses <zip>.sha256 when no hash is given)
+  zip="${2:?usage: ./kawa-edge verify-zip <path/to/KAWA_...zip> [expected-sha256]}"
+  want="${3:-$(cut -d' ' -f1 "$zip.sha256" 2>/dev/null || true)}"
+  [ -n "$want" ] || { echo "FAIL  no $zip.sha256 and no expected hash given" >&2; exit 1; }
+  got=$(sha256sum "$zip" | cut -d' ' -f1)
+  echo "sha256 $got"
+  [ "$want" = "$got" ] && { echo "PASS  matches the expected SHA-256"; exit 0; }
+  echo "FAIL  expected $want" >&2; exit 1
+fi
+
+
 # Run as the owner of this folder (not root), so state/ is yours and the container needs no privilege.
 KAWA_UID=$(stat -c %u .); KAWA_GID=$(stat -c %g .)
 export KAWA_UID KAWA_GID
+[ "$KAWA_UID" != "0" ] || die "this folder belongs to root. Give it to your NAS user first (e.g. chown -R <user>:users .); the deployer container must never run as root."
+
+# This script usually runs under sudo. It must NEVER follow a symbolic link while privileged: a link
+# planted in state/, secrets/ or config/ (by anyone, or by code in the container, which mounts them)
+# could otherwise make root change or overwrite a file outside this package.
+for p in state secrets config; do [ ! -L "$p" ] || die "$p is a symbolic link; refusing to run"; done
 mkdir -p state secrets config
-# Created by sudo => root-owned; hand them to the folder owner the container runs as.
-chown -R "$KAWA_UID:$KAWA_GID" state secrets 2>/dev/null || true
-chown "$KAWA_UID:$KAWA_GID" config config/kawa-edge.json 2>/dev/null || true
+link=$(find state secrets config -type l -print 2>/dev/null | head -n 1)
+[ -z "$link" ] || die "symbolic link found at $link; remove it (nothing was changed)"
+# Created by sudo => root-owned; hand them to the folder owner the container runs as (-h: never a link target).
+find state secrets config -exec chown -h "$KAWA_UID:$KAWA_GID" {} + 2>/dev/null || true
 chmod 700 secrets state 2>/dev/null || true
 
-if [ "${1:-}" = "verify-zip" ]; then
-  # Integrity of the delivered ZIP, on the NAS host, before anything else: ./kawa-edge verify-zip <zip>
-  zip="${2:?usage: ./kawa-edge verify-zip <path/to/KAWA_...zip>}"
-  want=$(cut -d' ' -f1 "$zip.sha256" 2>/dev/null || true)
-  got=$(sha256sum "$zip" | cut -d' ' -f1)
-  echo "sha256 $got"
-  if [ -n "$want" ] && [ "$want" = "$got" ]; then echo "PASS  matches $zip.sha256"; exit 0; fi
-  if [ -z "$want" ]; then echo "compare it with the SHA-256 published with the release"; exit 0; fi
-  echo "FAIL  expected $want" >&2; exit 1
-fi
 
 # The release ZIP is deterministic: every file carries the same fixed timestamp. Unzipped over an
 # older release, a changed file of equal size looks unchanged to BuildKit's incremental context sync
@@ -53,6 +65,7 @@ if [ "${KAWA_SKIP_BUILD:-}" != "1" ]; then
   if [ -n "${HTTPS_PROXY:-}" ]; then $DC build --quiet --build-arg HTTPS_PROXY="$HTTPS_PROXY" installer >/dev/null
   else $DC build --quiet installer >/dev/null; fi
 fi
-sha256sum MANIFEST_SHA256_V1_3_1.json 2>/dev/null | cut -d' ' -f1 > state/.image-manifest || true
-chown "$KAWA_UID:$KAWA_GID" state/.image-manifest 2>/dev/null || true
+# Atomic stamp: written to a fresh temp file, then renamed (a rename replaces a link, never follows it).
+tmp=$(mktemp state/.image-manifest.XXXXXX) && sha256sum MANIFEST_SHA256_V1_3_1.json 2>/dev/null | cut -d' ' -f1 > "$tmp" \
+  && chown -h "$KAWA_UID:$KAWA_GID" "$tmp" 2>/dev/null; [ -n "${tmp:-}" ] && mv -f "$tmp" state/.image-manifest || true
 exec $DC run --rm installer "$@"

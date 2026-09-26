@@ -17,7 +17,7 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { RUNTIME_DIR, SECRETS_DIR, STATE_DIR } from './paths.mjs';
 import { registerSecret, KawaError, out } from './log.mjs';
-import { HARD_LOCKS } from './config.mjs';
+import { HARD_LOCKS, domainOf } from './config.mjs';
 
 export const TOKEN_FILE = 'cloudflare_api_token';
 
@@ -129,8 +129,13 @@ export function ensureStagingSecrets(destIds, haltNotifyUrl, hubHosts = []) {
  * form, whatever the configuration says.
  */
 export function validateWebhookUrl(raw, expectedHost) {
+  registerSecret(String(raw));                       // C-06 · the value as typed is masked too
   let u;
   try { u = new URL(raw); } catch { throw new KawaError('WEBHOOK_URL_INVALID', 'not a valid URL'); }
+  // C-07 / F-18 · no query or fragment markers at all (even empty), and no percent-encoding in the
+  // secret: one spelling per secret, so the anti-reuse fingerprint cannot be dodged with %XX.
+  if (/[?#]/.test(String(raw))) throw new KawaError('WEBHOOK_URL_PATH', 'the webhook URL must not contain ? or #');
+  if (/%/.test(u.pathname)) throw new KawaError('WEBHOOK_URL_PATH', 'the webhook secret must not be percent-encoded');
   for (const p of HARD_LOCKS.FORBIDDEN_PORTS) {
     if (u.port === p || raw.includes(`:${p}`)) {
       throw new KawaError('HARD_LOCK_CONTROL_PORT', `port ${p} is the Hub CONTROL plane; signals may only go to the INGRESS (8181 -> 8081) through the public hostname`);
@@ -159,10 +164,11 @@ export function validateHaltUrl(raw, hubHosts = []) {
   }
   if (u.protocol !== 'https:') throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL must use https');
   if (u.port) throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL must not name a port');
+  // C-02 · a DNS name only: an IP literal could be the NAS or a Hub on the LAN.
+  if (/^\[|^\d+\.\d+\.\d+\.\d+$/.test(u.hostname) || !u.hostname.includes('.')) throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL must use a DNS name, not an IP address');
   const host = u.hostname.replace(/\.$/, '').toLowerCase();
   // Refuse every host in a Hub's DOMAIN (its zone/tunnel may expose other services, e.g. a control
   // plane alias), not only the exact ingress host.
-  const domainOf = (h) => String(h).replace(/\.$/, '').toLowerCase().split('.').slice(-2).join('.');
   const hubDomains = new Set([HARD_LOCKS.HUB_A_PUBLIC_HOST, ...hubHosts].map(domainOf));
   if (hubDomains.has(domainOf(host))) throw new KawaError('HALT_URL_IS_HUB', 'the halt notification must go to a collector independent of every Hub (not in a Hub\'s domain)');
   let decoded = u.pathname;
@@ -179,12 +185,18 @@ function fpStore() {
   if (fpCache) return fpCache;
   const f = fpFile();
   fpCache = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : { key: crypto.randomBytes(32).toString('hex'), destinations: {} };
+  // C-05 · a lost store silently disables the anti-reuse control: say so.
+  if (!fs.existsSync(f) && fs.existsSync(path.join(STATE_DIR, 'prod', 'deployed.json'))) {
+    out.warn('webhook fingerprint store is missing although PROD was deployed: secrets entered earlier cannot be checked for reuse');
+  }
   return fpCache;
 }
 
 export function fingerprint(store, url) {
   // Only the secret part matters: the same token on another host is still reuse.
-  const token = new URL(url).pathname.split('/').pop();
+  // F-18 · fingerprint the DECODED secret, so an encoded spelling of the same secret still collides.
+  let token = new URL(url).pathname.split('/').pop();
+  try { token = decodeURIComponent(token); } catch { /* validateWebhookUrl already refuses % */ }
   return crypto.createHmac('sha256', Buffer.from(store.key, 'hex')).update(token).digest('hex');
 }
 

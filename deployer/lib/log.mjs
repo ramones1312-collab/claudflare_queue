@@ -18,7 +18,8 @@ export function redact(text) {
   let s = String(text);
   // Longest first, so a secret that contains another one is fully masked.
   for (const v of [...secrets].sort((a, b) => b.length - a.length)) s = s.split(v).join('[REDACTED]');
-  s = s.replace(/(\/webhook\/)[^\s/"'?#]{6,}/g, '$1[REDACTED]');
+  // Any /webhook/<token> (case-insensitive), but not a documentation placeholder like <WEBHOOK_SECRET>.
+  s = s.replace(/(\/webhook\/)(?!<)[^\s/"'?#<>]{6,}/gi, '$1[REDACTED]');
   s = s.replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1[REDACTED]');
   return s;
 }

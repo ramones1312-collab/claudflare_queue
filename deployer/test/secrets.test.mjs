@@ -64,3 +64,19 @@ test('halt URL: any host in a Hub domain and encoded /webhook paths are refused'
     assert.throws(() => validateHaltUrl(u, ['hub-b.example.com']), { code: 'HALT_URL_IS_HUB' }, u);
   }
 });
+
+test('F-07 · no destination other than HUB_A may point anywhere in HUB_A\'s domain', async () => {
+  for (const host of ['integrademia.com', 'control.integrademia.com', 'x.vector-hook.integrademia.com']) {
+    const cfg = { schema: 'kawa.edge.nas.config.v1', cloudflare: { account_id: '0'.repeat(32) },
+      staging: { destinations: [{ id: 'HUB_A' }, { id: 'HUB_B' }] },
+      prod: { destinations: [{ id: 'HUB_A', webhook_host: H }, { id: 'HUB_B', webhook_host: host }] } };
+    await assert.rejects(validateConfig(cfg), { code: 'HARD_LOCK_HUB_A_HOST' }, host);
+  }
+});
+
+test('C-02 / C-07 / F-18 · IP-literal halt URLs, ?/# markers and percent-encoded secrets are refused', () => {
+  for (const u of ['https://192.168.1.10/x', 'https://[::1]/x', 'https://localhost/x']) assert.throws(() => validateHaltUrl(u), { code: 'HALT_URL_INVALID' }, u);
+  for (const u of [`https://${H}/webhook/${TOK}?`, `https://${H}/webhook/${TOK}#`, `https://${H}/webhook/%41${TOK}`]) {
+    assert.throws(() => validateWebhookUrl(u, H), { code: 'WEBHOOK_URL_PATH' }, u);
+  }
+});

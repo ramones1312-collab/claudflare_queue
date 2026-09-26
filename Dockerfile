@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # KAWA VECTOR · Edge Signal Buffer · NAS DEPLOYER IMAGE
 #
 # A tool to install and operate the Cloudflare Edge. NOT part of the trading runtime: it can be
