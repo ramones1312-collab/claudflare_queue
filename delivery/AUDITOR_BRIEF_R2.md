@@ -9,7 +9,7 @@ y el formato de veredicto por bloques no cambian: siguen siendo los de `AUDITOR_
 | Fichero | Qué es |
 |---|---|
 | `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip` | el artefacto a auditar |
-| `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip.sha256` | línea 1: ZIP ``8900863b41d2237ffc71897074207a46f170abc49ef456e225b5df085e0ed1de``; línea 2: manifiesto ``0e5785f320698647ab113b7df8ba894ceb3877dcc32a42d99730151b569083bd`` |
+| `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip.sha256` | línea 1: ZIP `8900863b41d2237ffc71897074207a46f170abc49ef456e225b5df085e0ed1de`; línea 2: manifiesto `0e5785f320698647ab113b7df8ba894ceb3877dcc32a42d99730151b569083bd` |
 | `AUDIT_RESPONSE_R2.md` | hallazgo por hallazgo: corrección, test de regresión y estado (CERRADO / DECLARADO) |
 | `RELEASE_REPORT_V1_3_1.md` | informe de release R2 (también dentro del ZIP; §5-ter resume la respuesta) |
 | *(para A3/A4)* `KAWA_EDGE_SIGNAL_BUFFER_V1_3_0_R4_CANDIDATE_2026-09-22.zip` | SHA-256 `1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867`; lo aporta el propietario para cerrar la identidad frente al R4 original de forma independiente |
