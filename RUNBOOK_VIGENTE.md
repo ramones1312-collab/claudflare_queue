@@ -1,12 +1,13 @@
 # RUNBOOK VIGENTE · KAWA Edge Signal Buffer V1.3.x · multi-destino
 
-**Único runbook en vigor** a partir de V1.3.1 R1. Sustituye a `STAGING_RUNBOOK.md` (V1.2.x, retirado del
+**Único runbook en vigor** (V1.3.1 R2). Sustituye a `STAGING_RUNBOOK.md` (V1.2.x, retirado del
 paquete; sigue archivado dentro del ZIP R4). La arquitectura de referencia sigue siendo
 `edge/ARCHITECTURE_V1_3_0.md` y `edge/MIGRATION_AND_DEPLOYMENT_V1_3_0.md`; **los comandos de despliegue los
 ejecuta el instalador**, siempre con `--config` explícito sobre configs generados. No hay que ejecutar
 `wrangler` a mano en ningún paso.
 
-Todos los comandos: por SSH en la carpeta del paquete, `sudo ./kawa-edge <comando>`.
+Todos los comandos: por SSH en la carpeta del paquete, `sudo ./kawa-edge <comando>`. La carpeta debe
+pertenecer a tu usuario del NAS (no a root): el contenedor se ejecuta con ese uid y **nunca** como root.
 Códigos de salida: `0 PASS` · `1 FAIL` · `2 BLOCKED` (falta una precondición; no se cambió nada que no se diga).
 
 ---
@@ -20,9 +21,12 @@ Códigos de salida: `0 PASS` · `1 FAIL` · `2 BLOCKED` (falta una precondición
 | Un consumer STAGING solo puede llegar a **su** receptor STAGING (Service Binding) | render + preflight + test de equivalencia |
 | Ningún config PROD tiene Service Binding, nombre `-stg` ni admin HTTP | render + preflight |
 | Señales a HUB_A solo por `https://vector-hook.integrademia.com/webhook/<secret>` (8181 → 8081) | `validateWebhookUrl()`; **8180 / 8080 rechazados** en cualquier forma |
-| El instalador nunca contacta al Hub, al NAS de HUB_A ni al Tunnel | no existe ningún código que lo haga; el contenedor no tiene red hacia la LAN del Hub más allá de Internet |
+| El instalador nunca contacta al Hub, al NAS de HUB_A ni al Tunnel | no existe ningún código que lo haga. Nota: la red del contenedor (bridge propio con NAT) **podría** alcanzar la LAN; el aislamiento es por código, no por red |
 | Cada Hub: cola, DLQ, consumer, credencial, cabeza y halt propios | render (un consumer por destino, con solo su entrada de `DESTINATIONS`) |
-| Un secreto de Hub nunca se reutiliza en otro | huella HMAC en `state/prod/webhook-fingerprints.json` |
+| Un secreto de Hub nunca se reutiliza en otro | huella HMAC del secreto **decodificado** en `state/prod/webhook-fingerprints.json`; `%` y `?`/`#` rechazados |
+| Ningún otro Hub puede apuntar al **dominio** de HUB_A (`integrademia.com`) | `config.mjs` (regla por dominio) |
+| El lanzador (que corre con `sudo`) nunca sigue un enlace simbólico | `kawa-edge`: rechaza symlinks en `state/`, `secrets/`, `config/`; `chown -h`; escritura atómica |
+| Nada llega a PROD sin un STAGING PASS **firmado, completo y corroborado** en Cloudflare | `prod.mjs requireStagingPass()` (§4) |
 | Conflicto o permiso insuficiente ⇒ **se detiene antes de escribir** | preflight (`RESOURCE_CONFLICT`, `CF_PERMISSION`, …) |
 | Nunca borra ni recrea un recurso que no creó | marcador `KAWA_EDGE_MANAGED` leído de Cloudflare |
 
@@ -84,7 +88,7 @@ reanuda colas y devuelve los receptores a `ok` (también con Ctrl-C); si la limp
 | E | **burst** de 10 concurrentes, orden estricto por destino | idem |
 | D | **duplicado** TradingView: dos `edge_seq`, mismo digest; cada Hub responde ACCEPTED y luego DUPLICATE | receptores |
 | F | **respuesta perdida** en HUB_A: sin avance, reintento, DELIVERED; HUB_B no afectado | receptor `silent_once` |
-| M | **caída del receptor** HUB_B (503) con 3 en vuelo: nada se pierde, orden estricto al recuperar | receptor `fail5xx_once` |
+| M | **caída del receptor** HUB_B: 3 alertas en vuelo y **una** entrega recibe 503 (`fail5xx_once`, un único 503); nada se pierde, orden estricto al recuperar | receptor `fail5xx_once` |
 | ISO-X | **HUB_A caído / HUB_B sigue**; HUB_A se pone al día en orden | `queues pause-delivery` de la cola HUB_A |
 | ISO-Y | **HUB_B caído / HUB_A sigue** (espejo) | idem cola HUB_B |
 | ISO-XY | **ambos caídos**: señales durables; cada uno converge por su cuenta | pausa de ambas; reanuda B, luego A |
@@ -92,8 +96,8 @@ reanuda colas y devuelve los receptores a `ok` (también con Ctrl-C); si la limp
 | H | **N+1 bloqueado solo en HUB_B**; su backlog sigue durable (R21) | receptor sano, halt vigente |
 | I | **admin retry** auditado: la alerta detenida y su backlog llegan en orden; sin `destination_id` → `DESTINATION_ID_REQUIRED`; `force` por HTTP → rechazado | admin `/retry` |
 | J | **admin skip**: `ADMIN_SKIPPED`, la cabeza avanza, la alerta saltada nunca se acepta | admin `/skip` |
-| L | **reinicio del DO** (redeploy del ingress) con una entrega pendiente: la secuencia continúa, nada se pierde; se exige que el id de despliegue del ingress **cambie** (prueba de reinicio) | `wrangler deploy` del ingress + API de despliegues |
-| K | **corte > 5 min** (lease de redispatch): se recupera sin intervención | pausa 6 min (se omite con `--quick`) |
+| L | **reinicio del DO** (redeploy del ingress) con una entrega pendiente: la secuencia continúa, nada se pierde; se exige que el id de despliegue del ingress exista antes y después y **cambie** (prueba de reinicio) | `wrangler deploy` del ingress + API de despliegues |
+| K | **corte > 5 min**: el Sequencer **re-publica** la entrega (`dispatch_attempts ≥ 2`, lease de redispatch) y se entrega una sola vez | pausa 6 min (se omite con `--quick` → `PARTIAL`) |
 | BYTE | **byte a byte**: cada cuerpo recibido tiene el SHA-256 de lo enviado; `digest_mismatches = 0` | ledgers de los receptores |
 | RB | **rollback-readiness** `ok:true`: todo drenado, sin halts | admin `/rollback-readiness` |
 
@@ -116,9 +120,17 @@ el borrado queda cubierto por los tests de workerd (`contract > 11b`, `R21`).
 
 `sudo ./kawa-edge prod-deploy`
 
-- **Exige** una evidencia `STAGING PASS` de Cloudflare con **todos** los gates obligatorios en PASS (K
-  incluido) para exactamente el mismo build: código del Edge (`src/**`), renderizador de configs y versión
-  de wrangler. Una ejecución `--quick` o de otro build no vale. Sin ella: `BLOCKED`.
+- **Exige un STAGING PASS válido** (el mismo control protege `add-hub --env prod` y `cutover`):
+  - evidencia **firmada** por esta instalación (una copiada, editada o escrita a mano no cuenta);
+  - **todos** los gates de la lista fijada en el código (no la que diga el fichero) en PASS, sin errores de
+    limpieza; gate G con el registro en la DLQ **verificado en la plataforma** (exige el permiso
+    *Account Analytics: Read*); gate K con redispatch real;
+  - ligada al build exacto: todo el instalador, todo el código del Edge, lockfile y versión de wrangler;
+  - de la misma cuenta de Cloudflare;
+  - cada destino PROD probado en STAGING con **los mismos** `timeout_ms`/`retry`;
+  - **corroborada en vivo**: los Workers STAGING en Cloudflare deben seguir ejecutando exactamente los
+    builds certificados. **No borres STAGING mientras operes PROD**: `add-hub --env prod` también lo exige.
+  Sin todo eso: `BLOCKED`, sin escribir nada en PROD.
 - Pide por prompt oculto:
   - la URL de notificación de halts PROD (https, sin puerto, **nunca** un host de Hub ni una ruta
     `/webhook/`; es la única salida del Sequencer que no pasa por un Service Binding);
@@ -130,7 +142,9 @@ el borrado queda cubierto por los tests de workerd (`contract > 11b`, `R21`).
   envía nada a HUB_A. El path token PROD se genera aleatorio y **no se muestra** (se rota en el cutover).
 - No despliega admin HTTP ni receptor en PROD (R4).
 - Repetirlo no cambia nada (`UNCHANGED`); `--set-webhook HUB_A` o `--set-halt-notify` para cambiar ese
-  secreto concreto. El path token del ingress PROD **solo** se rota en `cutover` (rotarlo en otro momento
+  secreto concreto. **Redesplegar un ingress PROD existente reinicia el Sequencer**: una alerta que llegue
+  en ese instante puede recibir 503 y TradingView no la reintenta (se perdería para todos los Hubs). Por eso
+  pide escribir `REDEPLOY PROD INGRESS` y debe hacerse cuando no se esperan alertas. El path token del ingress PROD **solo** se rota en `cutover` (rotarlo en otro momento
   dejaría a TradingView sin Edge después del cutover).
 
 `sudo ./kawa-edge hub-check HUB_A` → **BLOCKED (B-2)**. No envía nada.
@@ -141,16 +155,23 @@ el borrado queda cubierto por los tests de workerd (`contract > 11b`, `R21`).
 
 `sudo ./kawa-edge cutover-check` (no cambia nada):
 
-| # | Precondición | Estado en V1.3.1 R1 |
+| # | Precondición | Estado en V1.3.1 R2 |
 |---|---|---|
-| C1 | STAGING PASS en Cloudflare para este código | automático |
+| C1 | STAGING PASS firmado, completo y corroborado para este build (§4) | automático |
 | C2 | PROD desplegado, gestionado, al día, secretos presentes | automático |
 | C3 | Edge → HUB_A PASS por método no-trading | **BLOCKED · B-2** |
 | C4 | vía PROD para retry / skip / FAILED_PERMANENT / rollback-readiness | **BLOCKED · B-1** |
-| C5 | HUB_A GREEN | manual: el owner lo mira en la UI de HUB_A (8180) |
-| C6 | colas PROD limpias | automático si el token tiene Analytics:Read |
+| C5 | HUB_A GREEN | el owner lo comprueba en la UI de HUB_A (8180) y **lo escribe** en `cutover` (`HUB_A IS GREEN`) |
+| C6 | colas PROD limpias | automático con Analytics:Read; sin muestra o sin permiso = `UNKNOWN` (bloquea) |
 | C7 | rollback documentado y ensayado | gate RB de STAGING |
 | C8 | aprobación expresa del owner | se escribe en `cutover` |
+| C9 | ventana de doble ruta (ver abajo) | manual: procedimiento del owner |
+
+**C9 · Doble ruta durante el cutover y el rollback (auditoría F-14).** Mientras se cambian las alertas de
+TradingView, unas llegan directas a HUB_A y otras por el Edge: **no hay orden entre las dos rutas**. Y en un
+rollback, un backlog del Edge que se reanude llegaría **después** de señales directas más nuevas. Procedimiento
+exigido: cutover y rollback solo con la estrategia inactiva (sin alertas esperadas), cambiando **todas** las
+alertas en la misma ventana, y en rollback, drenar el Edge **antes** de volver a enviar directo (R4 §6).
 
 `sudo ./kawa-edge cutover` se niega mientras haya un BLOCKED/FAIL. Cuando todo esté en verde (revisión
 futura que resuelva B-1 y B-2): pide la frase `CUTOVER HUB_A APPROVED`, **rota** el path token del ingress
@@ -168,7 +189,9 @@ sudo ./kawa-edge add-hub HUB_B --env prod --webhook-host hub-b.midominio.com
 1. Valida el id (`^[A-Z][A-Z0-9_]{0,31}$`) y la nueva lista con el registro del Edge.
 2. Crea su cola y su DLQ; en STAGING, su propio receptor.
 3. Despliega **su** consumer (PROD: pide **su** `DEST_<ID>_WEBHOOK_URL`; si coincide con el secreto de
-   otro Hub → `WEBHOOK_SECRET_REUSED`).
+   otro Hub → `WEBHOOK_SECRET_REUSED`). **En PROD exige primero el STAGING PASS de §4 con este Hub probado
+   en STAGING** (orden obligatorio: `add-hub HUB_B --env staging` → `install` → `add-hub HUB_B --env prod`)
+   y la confirmación de redespliegue del ingress.
 4. Solo después actualiza el ingress (`DESTINATIONS` + productor), para que la cola nueva nunca acumule
    sin consumer.
 5. **Guardia de radio de impacto:** si cualquier otro consumer o receptor tuviera que cambiar, se detiene
@@ -226,7 +249,18 @@ nada queda referenciado), test E2E de que `cutover` se niega.
 | Id | Bloqueo | Qué desbloquea |
 |---|---|---|
 | **B-1** | no hay vía PROD para retry / skip / FAILED_PERMANENT / rollback-readiness dentro de R4 | decisión del owner entre O1/O2/O3 (§7) → revisión nueva |
-| **B-2** | no hay método **no-trading** para validar Edge → HUB_A (auth + transporte). Todo POST a `/webhook/<secret>` es una señal | evidencia del contrato de R8.4 REV8: un probe no-trading en la ruta del ingress (8181/8081), **o** la garantía escrita de que re-POSTear un `signal_id` ya procesado devuelve `DUPLICATE` sin efecto de ejecución, más un cuerpo ya procesado. Después, una revisión nueva conecta `hub-check` a ese método |
+| **B-2** | no hay método **no-trading** para validar Edge → HUB_A (auth + transporte). Todo POST a `/webhook/<secret>` es una señal | contrato escrito de R8.4 REV8 que fije **todo** esto: (a) un probe no-trading en la ruta del ingress (8181/8081), p. ej. un método distinto de POST con la autenticación comprobada **antes** que el método; **o** (b) la garantía de dedupe por `signal_id` con: respuesta exacta del duplicado (**2xx** con `code` `DUPLICATE*`; un 4xx pararía la línea HUB_A como `FAILED_PERMANENT`), ventana/TTL durable de dedupe, ausencia de efectos secundarios, y quién envía la prueba (solo el consumer PROD con el secreto guardado prueba la credencial real). Después, una revisión nueva conecta `hub-check` a ese método |
+| **B-2 ← B-1** | dependencia (auditoría F-15): una prueba que acabe en `FAILED_PERMANENT` dejaría la línea HUB_A PROD detenida sin vía de reanudación | resolver B-1 **antes** de ejecutar cualquier prueba B-2 |
+
+**Riesgos declarados (no bloquean STAGING, sí condicionan PROD):**
+
+- **F-10 · redespliegue del ingress PROD** reinicia el Sequencer (posible 503 no reintentado por TradingView):
+  confirmación escrita obligatoria y solo sin alertas esperadas (§4).
+- **F-14 · doble ruta** en cutover/rollback: procedimiento C9 (§5).
+- **H-16 · PROD nunca se ejercita antes de la primera señal real**: consecuencia directa de B-2; queda cubierto
+  cuando exista el probe no-trading.
+- **OBS-1 (R4, fuera de alcance):** `_notifyHalt` hace `fetch` sin timeout (dentro de `waitUntil`); propuesta
+  para una futura revisión del Edge: `AbortSignal.timeout`.
 
 **Por qué B-2 importa aunque STAGING pase:** en PROD el consumer llama a `vector-hook.integrademia.com`
 desde un Worker de Cloudflare. Esa petición atraviesa la configuración de seguridad de la zona

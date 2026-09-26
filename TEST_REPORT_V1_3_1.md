@@ -1,7 +1,7 @@
-# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R1 — TEST REPORT
+# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R2 — TEST REPORT
 
-**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R1 · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
-**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r1`
+**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R2 (remediación de la auditoría externa de R1) · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
+**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r2`
 (`node:22-bookworm-slim@sha256:43ac6c60…772c`, Node 22, wrangler 4.132.0, vitest 2.1.9,
 @cloudflare/vitest-pool-workers 0.5.40), contenedor con rootfs **read-only**, uid **no-root**,
 `cap_drop: ALL`, red bridge **sin salida**, host de 4 vCPU. Resultados exactos, evidencias y tiempos
@@ -18,14 +18,30 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 | Edge · guardián de red hermética (nuevo) | 2 | PASS |
 | Edge · consumer con solo su entrada de `DESTINATIONS` (nuevo) | 3 | PASS |
 | **Edge total** | **95** | **95/95 PASS** |
-| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, runner de gates, backlog, id de despliegue) | 27 | PASS |
-| Deployer · equivalencia semántica con los TOML de R4 (lector de wrangler) | 3 | PASS |
-| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 16 | PASS |
-| **Deployer total** | **46** | **46/46 PASS** |
+| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, veredictos de la puerta con **vitest real**, integridad del ZIP, lanzador bajo enlaces simbólicos, runner de gates, backlog, id de despliegue) | 50 | PASS |
+| Deployer · equivalencia con los TOML de R4: **config completo** de los 6 configs (lector de wrangler) | 6 | PASS |
+| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 19 | PASS |
+| **Deployer total** | **75** | **75/75 PASS** |
 | Ensayo local de gates STAGING (Miniflare, bundles exactos) | 13 ejecutados + 5 `CLOUD_ONLY` | PASS |
 | Gate físico sobre el ZIP final (imagen construida desde la carpeta extraída, lanzador `./kawa-edge`, uid 1026:100) | verify-fast + test-full + rehearse | PASS |
 
 **Ningún test de R4 se modificó, se saltó ni se relajó.** Ningún timeout se aumentó.
+
+**Regla de veredicto (R2, F-01/F-11).** `test-full` solo es PASS si: vitest sale con código 0, informa
+`success`, ninguna suite falla y **cada fichero `edge/test/*.test.js` presente en disco aparece ejecutado y
+en verde** (un fichero que no carga, o que no se ejecuta, es FAIL aunque el resto pase); y node:test sale con 0,
+con más de 0 tests y 0 fallos. La evidencia resultante va firmada (HMAC, clave local) y `package` rechaza
+evidencia sin firma o de otro árbol. La salida de vitest en R1 con código 1 tras 95/95 se debía a un enlace
+`node_modules/.vite` roto en el workspace temporal; corregido (el código ahora es 0 y se exige).
+
+**Nuevos en R2** (cada uno falla sin su corrección): `release-gate` (vitest real con un fichero que lanza al
+importar → FAIL, reproduce F-01 del auditor), `release-integrity` (ZIP con token/config o entradas fuera de
+raíz → FAIL; sin hash esperado → FAIL; evidencia sin firma → FAIL; enlaces y directorios anidados), `launcher`
+(enlace simbólico en `state/`/`secrets/`/`config/` → rechazo sin tocar el objetivo; carpeta de root; `.sha256`
+de dos líneas), `e2e-prod-gate` (10 evidencias STAGING manipuladas o insuficientes → BLOCKED con 0 escrituras
+PROD; `add-hub --env prod` con la misma puerta), `e2e-prod-locks`, `e2e-cutover-rotate` (ruta de éxito del
+cutover), y en `e2e-failclosed` un Worker ajeno oculto del listado (F-08) y un conflicto en una página
+posterior (F-09).
 
 ## 2. La regresión del NAS (53/90), reproducida y cerrada
 
@@ -67,7 +83,7 @@ Estado inicial = el real del usuario: **las 4 colas STAGING ya existen, ningún 
 | permiso Queues:Edit ausente | el error nombra exactamente `Account · Queues · Edit`; ningún Worker desplegado |
 | token erróneo | `TOKEN_INVALID` antes de nada |
 | add-hub HUB_C (STAGING) | toca **solo** cola/DLQ/receptor/consumer de HUB_C y el ingress (orden: receptor → consumer → ingress); config actualizado con copia; repetirlo se rechaza sin escribir |
-| PROD sin STAGING PASS, o con una ejecución `--quick` (PARTIAL) | `BLOCKED`, cero escrituras |
+| PROD sin STAGING PASS, o con una ejecución `--quick` (PARTIAL), o con cualquiera de 10 evidencias manipuladas/insuficientes (sin firma, lista de gates propia, cleanup con errores, DLQ no verificada, K sin redispatch, otro build, otra cuenta, destino PROD no probado, builds STAGING no corroborados en Cloudflare) | `BLOCKED`, cero escrituras; igual para `add-hub --env prod` |
 | URL de halts PROD apuntando a HUB_A | `HALT_URL_IS_HUB`, nada desplegado |
 | PROD con 8180 en la URL | `HARD_LOCK_CONTROL_PORT`, nada desplegado |
 | prod-deploy | despliega `kawa-edge-ingress-prod` y `kawa-edge-delivery-hub-a-prod` (inerte), el secreto de HUB_A solo en su consumer, sin Service Binding; STAGING intacto; el secreto no se imprime ni persiste (ni un digest); segundo `prod-deploy` sin escrituras; `--set-halt-notify` cambia solo esa URL y **no** rota el path token; HUB_B con el **mismo** secreto → `WEBHOOK_SECRET_REUSED`; HUB_B con el suyo → se añade **sin tocar** el consumer de HUB_A; `cutover-check` → C3/C4 `BLOCKED`; `cutover` → rechazado |
@@ -88,7 +104,7 @@ admin) en Miniflare desde **los mismos configs generados y los mismos bundles** 
 Por qué 5 son solo-Cloudflare (probado, no supuesto): pausar una cola o redesplegar exige reiniciar el
 runtime local; el broker de colas de Miniflare es solo memoria (se pierden copias en vuelo) y un workerd
 local reiniciado **conserva la marca de tiempo de la alarma del DO pero nunca la dispara**
-(experimento mínimo: alarma armada, reinicio, 7 s después `n=0` con la alarma aún «pendiente»). Sin
+(experimento mínimo, entregado como `deployer/test/experiments/alarm-restart.mjs`: alarma armada, reinicio, 7 s después `n=0` con la alarma aún «pendiente»). Sin
 reinicio, la alarma de redispatch del Sequencer real se disparó exactamente a los 300 s
 (`dispatch_attempts 1 → 2`), así que el código del Edge es correcto; la limitación es del emulador.
 

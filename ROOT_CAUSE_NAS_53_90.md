@@ -25,8 +25,9 @@ código de producción, aserciones, escenarios o timeouts.**
 | bridge por defecto (DNS 8.8.8.8 que falla rápido) | **90 passed** | 7.72 s |
 | bridge con `--dns 192.0.2.1` (resolvedor que **no responde**) | **50 failed / 40 passed**, 8/9 ficheros, **50× `Test timed out in 5000ms`** | 101.92 s |
 | Synology del usuario | 53 failed / 37 passed, 9/9 ficheros, `Test timed out in 5000ms` | 267.72 s |
+| auditor externo independiente (R4 reconstruido, resolvedor agujero negro) | **60 failed / 30 passed**, 108× «vitest-worker Timeout calling…» (runtime bloqueado); con V1.3.1: 95/95 | — |
 
-La firma coincide: todos los fallos son timeouts de ~5000–5011 ms, ninguno es una aserción. La diferencia 50 vs 53
+La firma coincide: todos los fallos son timeouts de ~5000–5011 ms, ninguno es una aserción. La diferencia 50 / 53 / 60
 y 101 s vs 267 s es la esperable entre un resolvedor que no responde con 4 CPU y el del NAS con menos CPU
 (los ficheros se reparten distinto entre workers).
 

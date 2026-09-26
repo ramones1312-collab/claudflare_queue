@@ -104,7 +104,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   const gate = (id, title, run, opts = {}) => G.push({ id, title, run, ...opts });
   // Gates that need a platform operation (queue pause, redeploy) run ONLY against Cloudflare. A local
   // runtime restart cannot emulate them: Miniflare's queue broker is in-memory, and a restarted local
-  // workerd keeps a Durable Object's alarm timestamp but never fires it (proven, RELEASE_REPORT §5).
+  // workerd keeps a Durable Object's alarm timestamp but never fires it (proven: TEST_REPORT §5, deployer/test/experiments/alarm-restart.mjs).
   const cloudOnly = { cloudOnly: true };
 
   gate('G00', 'Baseline: schema 2, every enabled destination clean, receivers reset', async (h) => {

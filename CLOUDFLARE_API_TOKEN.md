@@ -16,7 +16,7 @@ imagen, en el ZIP, en logs ni en informes, y no se pega en ningún chat.
 | Account | **Workers Scripts** | **Edit** | **Sí** | desplegar/borrar Workers (`PUT /workers/scripts/:name`, `DELETE /workers/services/:name`), subir secretos con el despliegue, leer bindings y nombres de secretos (`GET …/settings`, `…/secrets`), subdominio `workers.dev`, namespaces de Durable Objects |
 | Account | **Queues** | **Edit** | **Sí** | listar/crear colas (`GET/POST /queues`), registrar consumers (`POST /queues/:id/consumers`), pausar/reanudar entrega en los gates (`queues pause-delivery / resume-delivery`) |
 | Account | Account Settings | Read | Opcional | mostrar el nombre de la cuenta en el preflight (`GET /accounts/:id`); sin él se continúa |
-| Account | Account Analytics | Read | Opcional (recomendado) | backlog de colas por GraphQL: evidencia de DLQ en el gate G y la comprobación C6 «colas limpias» del cutover; sin él aparecen como `UNKNOWN` |
+| Account | **Account Analytics** | **Read** | **Sí para PROD** (STAGING funciona sin él) | backlog de colas por GraphQL: evidencia de DLQ en el gate G y la comprobación C6 «colas limpias» del cutover. Sin él el gate G queda `dlq.verified: false` y **ese STAGING PASS no autoriza `prod-deploy` ni `add-hub --env prod`** (R2, F-16); C6 aparece como `UNKNOWN` y bloquea |
 | Account | Workers Tail | Read | Opcional | solo para `./kawa-edge tail <worker>` (logs en vivo, redactados) |
 
 5. **Account Resources** → *Include* → **tu cuenta concreta** (no «All accounts»).

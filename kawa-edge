@@ -16,7 +16,8 @@ if [ "${1:-}" = "verify-zip" ]; then
   # Read-only integrity check of the delivered ZIP, before anything else:
   #   ./kawa-edge verify-zip <zip> [expected-sha256]      (uses <zip>.sha256 when no hash is given)
   zip="${2:?usage: ./kawa-edge verify-zip <path/to/KAWA_...zip> [expected-sha256]}"
-  want="${3:-$(cut -d' ' -f1 "$zip.sha256" 2>/dev/null || true)}"
+  # The sidecar's FIRST line is the ZIP hash; the second one is the manifest hash (checked inside).
+  want="${3:-$(head -n 1 "$zip.sha256" 2>/dev/null | cut -d' ' -f1 || true)}"
   [ -n "$want" ] || { echo "FAIL  no $zip.sha256 and no expected hash given" >&2; exit 1; }
   got=$(sha256sum "$zip" | cut -d' ' -f1)
   echo "sha256 $got"
@@ -59,7 +60,7 @@ if [ "${1:-}" = "refresh-context" ]; then echo "context refreshed (rebuild neede
 
 # KAWA_SKIP_BUILD=1: use an image you built yourself (e.g. behind a TLS-inspecting proxy, see README).
 if [ "${KAWA_SKIP_BUILD:-}" != "1" ]; then
-  if ! docker image inspect kawa-edge-deployer:1.3.1-nas-r1 >/dev/null 2>&1; then
+  if ! docker image inspect kawa-edge-deployer:1.3.1-nas-r2 >/dev/null 2>&1; then
     echo "Building the deployer image (first run only; a few minutes on a NAS)…"
   fi
   if [ -n "${HTTPS_PROXY:-}" ]; then $DC build --quiet --build-arg HTTPS_PROXY="$HTTPS_PROXY" installer >/dev/null

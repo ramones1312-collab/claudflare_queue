@@ -23,11 +23,11 @@ import { writeSigned, verify as verifySignature, readEvidence } from './evidence
 
 export const IDENTITY = {
   artifact: 'edge-signal-buffer-v1.3.1-nas',
-  revision: 'R1 · turnkey NAS deployer + hermetic test harness (2026-09-26)',
+  revision: 'R2 · external-audit remediation of R1 (2026-09-26)',
   lineage: 'V1.3.1 <- V1.3.0 R4 CANDIDATE (zip sha256 1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867)',
   runtime_code: 'Edge Worker sources byte-identical to V1.3.0 R4',
 };
-export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R1_2026-09-26.zip';
+export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip';
 export const EVIDENCE_NAME = 'TEST_EVIDENCE_V1_3_1.json';
 const ZIP_ROOT = 'kawa-edge-nas';
 
@@ -259,8 +259,9 @@ export async function packageRelease(ctx, f) {
   const zip = path.join(distDir, ZIP_NAME);
   writeZip(zip, entries);
   const zsha = sha256File(zip);
-  fs.writeFileSync(`${zip}.sha256`, `${zsha}  ${ZIP_NAME}\n`);
   const msha = sha256File(path.join(ROOT, MANIFEST_NAME));
+  // F-20 · both hashes, in `sha256sum -c` format: the ZIP, and the manifest once extracted.
+  fs.writeFileSync(`${zip}.sha256`, `${zsha}  ${ZIP_NAME}\n${msha}  ${ZIP_ROOT}/${MANIFEST_NAME}\n`);
   out.ok(`${ZIP_NAME} · ${files.length} files · ${(fs.statSync(zip).size / 1024).toFixed(0)} KiB`);
   out.info(`ZIP sha256      ${zsha}`);
   out.info(`MANIFEST sha256 ${msha} (${manifest.file_count} files declared, self-hash excluded)`);
@@ -290,6 +291,11 @@ export async function verifyRelease(ctx, f) {
   try {
     extractZip(zip, tmp);
     const root = path.join(tmp, ZIP_ROOT);
+    if (fs.existsSync(side)) {
+      const line = fs.readFileSync(side, 'utf8').split('\n').find(l => l.endsWith(`${ZIP_ROOT}/${MANIFEST_NAME}`));
+      if (line && line.split(/\s+/)[0] !== sha256File(path.join(root, MANIFEST_NAME))) throw new KawaError('MANIFEST_SHA_MISMATCH', 'manifest SHA-256 differs from the published one');
+      if (line) out.ok('manifest SHA-256 matches the published one');
+    }
     const m = verifyManifest(root);
     if (!m.ok) throw new KawaError('MANIFEST_MISMATCH', `missing ${m.missing} mismatched ${m.mismatched} undeclared ${m.extra}`);
     const declared = new Set([...Object.keys(JSON.parse(fs.readFileSync(path.join(root, MANIFEST_NAME), 'utf8')).files), MANIFEST_NAME]);

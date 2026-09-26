@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -75,5 +76,21 @@ test('verify-zip fails without a .sha256 or an explicit expected hash', () => {
     const r = run(t, ['verify-zip', path.join(t, 'x.zip')]);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /no .*sha256/);
+  } finally { fs.rmSync(t, { recursive: true, force: true }); }
+});
+
+test('verify-zip reads the ZIP hash from the first line of the two-line .sha256 sidecar', () => {
+  const t = sandbox();
+  try {
+    const zip = path.join(t, 'x.zip');
+    fs.writeFileSync(zip, 'zip');
+    const sha = crypto.createHash('sha256').update('zip').digest('hex');
+    fs.writeFileSync(zip + '.sha256', `${sha}  x.zip\n${'b'.repeat(64)}  kawa-edge-nas/MANIFEST_SHA256_V1_3_1.json\n`);
+    const ok = run(t, ['verify-zip', zip]);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /PASS/);
+    fs.writeFileSync(zip, 'tampered');
+    const bad = run(t, ['verify-zip', zip]);
+    assert.notEqual(bad.status, 0);
   } finally { fs.rmSync(t, { recursive: true, force: true }); }
 });

@@ -1,4 +1,4 @@
-# KAWA VECTOR · Edge Signal Buffer · INSTALACIÓN EN EL NAS (V1.3.1 R1)
+# KAWA VECTOR · Edge Signal Buffer · INSTALACIÓN EN EL NAS (V1.3.1 R2)
 
 Todo corre en **un contenedor temporal** en tu Synology: no instalas Node, npm ni Wrangler en Windows, no
 creas nada a mano en el dashboard de Cloudflare y no editas TOML. El contenedor **no publica puertos, no
@@ -13,19 +13,26 @@ comparte nada con HUB_A** y termina al acabar cada comando.
 - **SSH** activado: Panel de control → Terminal y SNMP → *Habilitar SSH*.
 - ~1.5 GB libres en el volumen y salida HTTPS a Internet desde el NAS.
 - Un **API Token** de Cloudflare dedicado: sigue [`CLOUDFLARE_API_TOKEN.md`](./CLOUDFLARE_API_TOKEN.md)
-  (2 permisos obligatorios; 5 minutos).
+  (2 permisos obligatorios para STAGING y un tercero, *Account Analytics: Read*, para autorizar PROD; 5 minutos).
 
 ## 1. Subir y verificar el paquete
 
-1. Copia `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R1_2026-09-26.zip` **y** su `.sha256` a
+1. Copia `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip` **y** su `.sha256` a
    `/volume1/docker/kawa-edge-deployer/` (File Station). Extrae el ZIP ahí: aparece la carpeta
    `kawa-edge-nas/`. Es una carpeta **distinta** de la de HUB_A.
-2. Por SSH:
+2. La carpeta debe pertenecer a **tu usuario del NAS, no a root** (el contenedor corre con ese usuario
+   y el lanzador se niega a correr como root). Si la extrajiste por SSH con `sudo`, corrígelo una vez:
+   `sudo chown -R <tu-usuario>:users /volume1/docker/kawa-edge-deployer/kawa-edge-nas`.
+3. Por SSH:
 
 ```sh
 cd /volume1/docker/kawa-edge-deployer/kawa-edge-nas
-sudo ./kawa-edge verify-zip ../KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R1_2026-09-26.zip    # → PASS
+sudo ./kawa-edge verify-zip ../KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R2_2026-09-26.zip    # → PASS
 ```
+
+`verify-zip` exige el `.sha256` junto al ZIP (o el hash como segundo argumento): sin hash esperado
+responde FAIL, nunca PASS. La primera línea del `.sha256` es el hash del ZIP; la segunda, el del
+`MANIFEST_SHA256_V1_3_1.json` que va dentro (lo comprueba `verify-release`).
 
 ## 2. Configurar (solo un dato para STAGING)
 
@@ -115,5 +122,8 @@ La CA solo se usa durante `npm ci`; no queda en la imagen. Después usa el lanza
 | `G00 … halted / unresolved` | STAGING quedó sucio de una ejecución interrumpida: `sudo ./kawa-edge gates --repair` |
 | `NO_TTY` | ejecuta por SSH con `sudo ./kawa-edge …` (hace falta un terminal para los prompts ocultos) |
 | permiso denegado en `state/` | ejecuta siempre con `./kawa-edge` (usa el propietario de la carpeta como usuario del contenedor) |
+| `this folder belongs to root` | `sudo chown -R <tu-usuario>:users .` en `kawa-edge-nas/` (paso 1.2) |
+| `symbolic link found at …` / `… is a symbolic link` | alguien dejó un enlace simbólico en `state/`, `secrets/` o `config/`; bórralo. El lanzador corre con sudo y nunca sigue enlaces (R2, F-02) |
+| `no complete, signed Cloudflare STAGING PASS …` al ir a PROD | no hay un STAGING PASS firmado, completo y del mismo código/cuenta/destinos; el mensaje lista cada motivo (p. ej. falta *Account Analytics: Read*) |
 
 Cada ejecución deja un log redactado en `state/logs/` (sin secretos).

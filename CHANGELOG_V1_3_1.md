@@ -1,4 +1,27 @@
-# CHANGELOG · V1.3.1 R1 respecto de V1.3.0 R4
+# CHANGELOG · V1.3.1 (R2) respecto de V1.3.0 R4
+
+## R2 (2026-09-26) · remediación de la auditoría externa de R1 (veredicto FAIL)
+
+Detalle hallazgo por hallazgo, con su test de regresión: `delivery/AUDIT_RESPONSE_R2.md`.
+**`edge/src/**`, receptor STAGING y admin: siguen byte-idénticos a R4.** Cambios solo en el instalador, el
+lanzador, las herramientas de release, los tests del deployer y la documentación:
+
+| Área | Cambio |
+|---|---|
+| `deployer/lib/release.mjs` | veredictos estrictos de `test-full` (F-01/F-11); evidencia firmada; `.sha256` con hash del ZIP y del manifiesto; `verify-release` sobre entradas crudas del ZIP y hash esperado obligatorio (F-06/F-20) |
+| `deployer/lib/evidence.mjs` (**A**) | firma HMAC de la evidencia y binding sobre deployer + runtime del Edge + lockfile + wrangler (F-04/F-05) |
+| `deployer/lib/prod.mjs`, `addhub.mjs` | una sola puerta STAGING PASS para toda escritura PROD, corroborada en Cloudflare (F-03/F-04/F-16/F-17); confirmación tecleada para redesplegar el ingress PROD (F-10); ruta de éxito del cutover (F-13/H-15) |
+| `deployer/lib/gates/run.mjs` | lista de gates en código; G/K/L/ISO-XY/G00/RB endurecidos; 0 gates = FAIL (E-05…E-10) |
+| `deployer/lib/cfapi.mjs`, `preflight.mjs`, `deploy.mjs` | paginación completa, existencia por nombre antes de CREATE (F-08/F-09/D-05) |
+| `deployer/lib/config.mjs`, `secrets.mjs`, `log.mjs` | bloqueo por dominio de HUB_A, huella decodificada, reglas de URL, redacción (F-07/F-18/C-02…C-07/H-08) |
+| `deployer/lib/manifest.mjs`, `render.mjs`, `wrangler.mjs`, `paths.mjs`, `commands.mjs` | exclusiones solo en raíz y enlaces rechazados (F-12); digest independiente de la ruta (D-09); wrangler por ruta fija (D-10); propiedad en `resume-queues` (D-08) |
+| `kawa-edge`, `Dockerfile`, `docker-compose.yml`, `.dockerignore` | lanzador sin seguir enlaces bajo sudo, carpeta de root rechazada, sello atómico, `verify-zip` exige hash (F-02/C-09); sin `# syntax=` (C-08); imagen `1.3.1-nas-r2` |
+| `deployer/test/**` | nuevos: `release-gate`, `release-integrity`, `launcher`, `e2e-prod-gate`, `e2e-prod-locks`, `e2e-cutover-rotate`; equivalencia R4 del config completo de los 6 configs (F-21); experimento `experiments/alarm-restart.mjs` (F-24) |
+| Documentación | RUNBOOK (invariantes, requisitos de STAGING PASS, aviso de redespliegue del ingress, doble ruta, B-2←B-1, riesgos declarados), token (*Account Analytics: Read* obligatorio para PROD), README, informes |
+
+---
+
+## R1 · respecto de V1.3.0 R4
 
 Base: `KAWA_EDGE_SIGNAL_BUFFER_V1_3_0_R4_CANDIDATE_2026-09-22.zip`
 (SHA-256 `1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867`), importado sin cambios como
@@ -55,7 +78,7 @@ con el lector de configuración del wrangler fijado; todo lo demás es idéntico
 | `edge/STAGING_RUNBOOK.md` | **D** · runbook V1.2.x con órdenes legacy; sustituido por `RUNBOOK_VIGENTE.md` (único vigente) |
 | `edge/README.md` | **M** · apuntaba a `STAGING_RUNBOOK.md`; ahora apunta al runbook vigente |
 | `edge/MIGRATION_AND_DEPLOYMENT_V1_3_0.md` | **M** · solo una nota de 5 líneas al principio (autoridad de arquitectura; comandos ejecutados por el instalador; B-1). Resto intacto |
-| `edge/VERSION` | **M** · identidad V1.3.1 R1 antepuesta; registro de R4 intacto debajo |
+| `edge/VERSION` | **M** · identidad V1.3.1 (R1, luego R2) antepuesta; registro de R4 intacto debajo |
 | `edge/package.json`, `edge/package-lock.json` | **M** · solo la versión raíz `1.3.0 → 1.3.1`. **Árbol de dependencias idéntico** |
 | `edge/ARCHITECTURE_V1_3_0.md`, `TEST_REPORT_V1_3_0.md`, `REQUIREMENTS_MATRIX_V1_3_0.json`, `destinations.example.json`, `.dev.vars.example`, `test/kawa/*` | sin cambios |
 
@@ -66,7 +89,7 @@ con el lector de configuración del wrangler fijado; todo lo demás es idéntico
 | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `kawa-edge` | imagen fijada por digest, capas de dependencias/código separadas; contenedor sin puertos, read-only, `cap_drop ALL`; lanzador del host |
 | `config/kawa-edge.example.json`, `secrets/README.md` | configuración única, sin secretos; buzón de un solo uso para el token |
 | `deployer/cli.mjs`, `deployer/lib/**` | instalador y operación (ver `RUNBOOK_VIGENTE.md`) |
-| `deployer/test/**` | 32 tests (unit, equivalencia R4, E2E contra API simulado) |
+| `deployer/test/**` | R1: 46 tests (27 unit + 3 equivalencia R4 + 16 E2E contra API simulado); R2: ver `TEST_REPORT_V1_3_1.md §1` |
 | `README_NAS_INSTALL.md`, `RUNBOOK_VIGENTE.md`, `CLOUDFLARE_API_TOKEN.md`, `ROOT_CAUSE_NAS_53_90.md`, `TEST_REPORT_V1_3_1.md`, `RELEASE_REPORT_V1_3_1.md`, `CHANGELOG_V1_3_1.md`, `VERSION` | documentación de la entrega |
 | `MANIFEST_SHA256_V1_3_1.json`, `TEST_EVIDENCE_V1_3_1.json` | generados por `package` |
 
