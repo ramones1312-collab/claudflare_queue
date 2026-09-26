@@ -54,3 +54,15 @@ test('a wrong token is refused before anything else', async () => {
     assert.equal(writes(w.mock).length, 0);
   } finally { await w.close(); }
 });
+
+test('D-08 · resume-queues never resumes a queue consumed by a foreign Worker', async () => {
+  const w = await world({ queues: PRE_EXISTING.map(name => ({ name, paused: name === 'kawa-signal-buffer-hub-a-stg',
+    consumers: name === 'kawa-signal-buffer-hub-a-stg' ? [{ script: 'someone-else', type: 'worker' }] : [] })) });
+  try {
+    w.sb.dropToken();
+    const r = await runCli(w.sb, w.api, ['resume-queues', 'staging']);
+    assert.equal(r.code, 1, r.text);
+    assert.match(r.text, /FOREIGN_QUEUE/);
+    assert.equal(writes(w.mock).length, 0, JSON.stringify(writes(w.mock)));
+  } finally { await w.close(); }
+});

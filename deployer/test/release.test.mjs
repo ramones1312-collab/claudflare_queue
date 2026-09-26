@@ -66,19 +66,19 @@ test('targeted selection: core -> whole Edge suite; one test file -> that file; 
   assert.deepEqual([docs.allEdge, docs.edgeFiles.length, docs.deployer], [false, 0, false]);
 });
 
-test('F-05 · the STAGING binding covers the deployer, Edge runtime, package files, CLI and Dockerfile', async () => {
+test('F-05 / R3-16 · the STAGING binding covers the deployer, Edge runtime, package files, CLI, Dockerfile, launcher and compose file', async () => {
   const { spawnSync } = await import('node:child_process');
   const t = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-'));
   try {
     fs.cpSync(path.join(ROOT, 'deployer'), path.join(t, 'deployer'), { recursive: true });
-    for (const f of ['Dockerfile', 'edge/package.json', 'edge/package-lock.json']) { fs.mkdirSync(path.dirname(path.join(t, f)), { recursive: true }); fs.copyFileSync(path.join(ROOT, f), path.join(t, f)); }
+    for (const f of ['Dockerfile', 'kawa-edge', 'docker-compose.yml', 'edge/package.json', 'edge/package-lock.json']) { fs.mkdirSync(path.dirname(path.join(t, f)), { recursive: true }); fs.copyFileSync(path.join(ROOT, f), path.join(t, f)); }
     for (const d of ['edge/src', 'edge/staging-receiver/src', 'edge/admin-worker/src']) fs.cpSync(path.join(ROOT, d), path.join(t, d), { recursive: true });
     const hash = () => spawnSync(process.execPath, ['--input-type=module', '-e',
       `import { bindingHash } from ${JSON.stringify(path.join(t, 'deployer/lib/evidence.mjs'))}; process.stdout.write(bindingHash('4.132.0'));`],
       { encoding: 'utf8', env: { ...process.env, KAWA_EDGE_DIR: '', KAWA_ROOT: '' } }).stdout;
     const base = hash();
     assert.match(base, /^[0-9a-f]{64}$/);
-    for (const f of ['Dockerfile', 'deployer/cli.mjs', 'edge/package.json', 'deployer/lib/config.mjs', 'edge/src/sequencer.js', 'edge/staging-receiver/src/index.js']) {
+    for (const f of ['Dockerfile', 'kawa-edge', 'docker-compose.yml', 'deployer/cli.mjs', 'edge/package.json', 'deployer/lib/config.mjs', 'edge/src/sequencer.js', 'edge/staging-receiver/src/index.js']) {
       const p = path.join(t, f), orig = fs.readFileSync(p);
       fs.appendFileSync(p, '\n');
       assert.notEqual(hash(), base, `${f} is not bound`);

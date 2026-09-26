@@ -14,7 +14,8 @@ process.env.KAWA_STATE = STATE;                           // before any lib impo
 const { findEvidence, verifyRelease, ZIP_NAME, EVIDENCE_NAME } = await import('../lib/release.mjs');
 const { writeSigned } = await import('../lib/evidence.mjs');
 const { buildManifest, inputTreeHash, listPackageFiles, MANIFEST_NAME } = await import('../lib/manifest.mjs');
-const { writeZip } = await import('../lib/zip.mjs');
+const { writeZip, readZip } = await import('../lib/zip.mjs');
+const { spawnSync } = await import('node:child_process');
 
 const ok = { ok: true, code: 0, pass: 1, total: 1, tests: 1 };
 
@@ -137,4 +138,60 @@ test('R3-01 · equivalent spellings of secrets/, config/, state/ paths are refus
                       'kawa-edge-nas/edge/./node_modules/x.js', 'kawa-edge-nas/edge/src/../../secrets/x', 'kawa-edge-nas/secrets/']) {
     await assert.rejects(verify(makeZip([name], { declare: true })), { code: 'ZIP_ENTRY_NOT_CANONICAL' }, name);
   }
+});
+
+test('R3-04 · a malformed signature value (non-hex, multi-byte) is "not signed", never an exception', async () => {
+  const { verify: v } = await import('../lib/evidence.mjs');
+  writeSigned(path.join(STATE, 'r304.json'), { a: 1 });              // a key must exist, or verify() stops earlier
+  for (const value of ['é'.repeat(64), 'z'.repeat(64), 'a'.repeat(63), 42, null]) assert.equal(v({ a: 1, signature: { alg: 'HMAC-SHA256', value } }), false, String(value));
+});
+
+/** Rewrites one field of a written ZIP (little-endian) at the n-th central/local record. */
+function mutate(zip, fn) { const b = fs.readFileSync(zip); fn(b); fs.writeFileSync(zip, b); fs.writeFileSync(`${zip}.sha256`, fs.readFileSync(`${zip}.sha256`, 'utf8').replace(/^[0-9a-f]{64}/, crypto.createHash('sha256').update(b).digest('hex'))); return zip; }
+const cdStart = (b) => b.readUInt32LE(b.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) + 16);
+
+test('R3-11 · symlink entries, local/central mismatches and bytes after the directory are refused', async () => {
+  // a symlink entry (unix type 0o120000 in the external attributes)
+  await assert.rejects(verify(mutate(makeZip(), (b) => { const p = cdStart(b); b.writeUInt32LE(((0o120777) << 16) >>> 0, p + 38); })), /not a regular file/);
+  // local header CRC differs from the central directory
+  await assert.rejects(verify(mutate(makeZip(), (b) => { b.writeUInt32LE((b.readUInt32LE(14) ^ 1) >>> 0, 14); })), /local header differs/);
+  // bytes appended after the end record, and a comment
+  const z = makeZip();
+  fs.appendFileSync(z, 'TAIL');
+  fs.writeFileSync(`${z}.sha256`, fs.readFileSync(`${z}.sha256`, 'utf8').replace(/^[0-9a-f]{64}/, crypto.createHash('sha256').update(fs.readFileSync(z)).digest('hex')));
+  await assert.rejects(verify(z), /bytes after its end record/);
+});
+
+test('R3-12 · tool-named directories outside their fixed places are package content; non-regular files are refused', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ri-r12-'));
+  fs.mkdirSync(path.join(root, 'edge/test/.wrangler'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'edge/node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'edge/test/.wrangler/x.test.js'), '1');
+  fs.writeFileSync(path.join(root, 'edge/node_modules/ignored.js'), '1');
+  fs.writeFileSync(path.join(root, 'edge/test/run.log'), '1');
+  const h0 = inputTreeHash(root);
+  fs.writeFileSync(path.join(root, 'edge/test/.wrangler/x.test.js'), '2');
+  assert.notEqual(inputTreeHash(root), h0, 'edge/test/.wrangler/x.test.js must be hashed');
+  const files = listPackageFiles(root);
+  assert.ok(files.includes('edge/test/run.log') && !files.includes('edge/node_modules/ignored.js'));
+  spawnSync('mkfifo', [path.join(root, 'edge/test/pipe')]);
+  if (fs.existsSync(path.join(root, 'edge/test/pipe'))) assert.throws(() => listPackageFiles(root), /not a regular file/);
+});
+
+test('R3-14 · evidence signed by ANOTHER installation (the developer\'s, seen on the NAS) warns, never refuses the genuine ZIP', async () => {
+  const zip = makeZip();
+  // re-sign the packaged evidence with a foreign key id, as a genuine ZIP looks on the NAS
+  const b = readZip(zip);
+  const e = b.find(x => x.name.endsWith(EVIDENCE_NAME));
+  const ev = JSON.parse(e.data.toString());
+  ev.signature = { alg: 'HMAC-SHA256', key_id: 'fffffffffff0', value: 'f'.repeat(64) };
+  e.data = Buffer.from(JSON.stringify(ev));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ri-r14-'));
+  for (const x of b) { fs.mkdirSync(path.dirname(path.join(root, x.name)), { recursive: true }); fs.writeFileSync(path.join(root, x.name), x.data); }
+  const pkg = path.join(root, 'kawa-edge-nas');
+  fs.writeFileSync(path.join(pkg, MANIFEST_NAME), JSON.stringify(buildManifest(pkg, { artifact: 't', revision: 'r' })));
+  writeZip(zip, listPackageFiles(pkg).map(p => ({ name: `kawa-edge-nas/${p}`, data: fs.readFileSync(path.join(pkg, p)) })));
+  const h = (x) => crypto.createHash('sha256').update(x).digest('hex');
+  fs.writeFileSync(`${zip}.sha256`, `${h(fs.readFileSync(zip))}  ${ZIP_NAME}\n${h(fs.readFileSync(path.join(pkg, MANIFEST_NAME)))}  kawa-edge-nas/${MANIFEST_NAME}\n`);
+  assert.equal((await verify(zip)).result, 'PASS');
 });

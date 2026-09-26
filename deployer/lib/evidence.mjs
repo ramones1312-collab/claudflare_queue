@@ -1,13 +1,14 @@
 /**
  * Evidence integrity (audit F-04/F-05/F-16).
  *
- * THREAT MODEL, stated plainly: evidence files live in state/ on the NAS. A local HMAC key
+ * THREAT MODEL, stated plainly (R3-06): evidence files live in state/ on the NAS. A local HMAC key
  * (state/.evidence-key, 0600) signs every evidence file the deployer writes, so a hand-written,
- * edited or copied-in file is refused. It cannot stop someone with root on the NAS who can also read
- * the key; for PROD that is why STAGING evidence is ALSO corroborated live against Cloudflare (the
- * STAGING Workers must still carry the exact builds the gates certified), and why the release's
- * independent assurance is re-running `test-full` on the delivered ZIP (physical gate), not reading
- * the packaged JSON.
+ * edited or copied-in file is refused. It does NOT protect against whoever operates the installation
+ * or has root on the NAS: with the key they can sign a forged STAGING PASS, and the live
+ * corroboration (STAGING Workers still run the certified builds) does not stop that either, because
+ * builds are deterministic and `install --no-gates` deploys them without running any gate. It is a
+ * guard against accidents and hand edits, not proof for a third party. Third-party assurance is
+ * re-running `test-full` on the delivered ZIP (physical gate) and the owner running the gates.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,6 +46,8 @@ export function sign(obj) {
 
 /** True where this installation holds an evidence key (the one that signs its own test runs). */
 export const hasEvidenceKey = () => fs.existsSync(keyFile());
+/** R3-14 · id of THIS installation's key (as written in signature.key_id), or null without a key. */
+export const localKeyId = () => (hasEvidenceKey() ? crypto.createHash('sha256').update(key()).digest('hex').slice(0, 12) : null);
 
 export function verify(obj) {
   if (!obj || !obj.signature || obj.signature.alg !== 'HMAC-SHA256') return false;
@@ -52,7 +55,9 @@ export function verify(obj) {
   const body = { ...obj }; delete body.signature;
   const want = crypto.createHmac('sha256', key()).update(canonical(body)).digest('hex');
   const got = String(obj.signature.value || '');
-  return got.length === want.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
+  // R3-04 · a malformed value (non-hex, wrong length, multi-byte chars) is simply "not signed", never a throw.
+  if (!/^[0-9a-f]{64}$/.test(got)) return false;
+  return crypto.timingSafeEqual(Buffer.from(got, 'hex'), Buffer.from(want, 'hex'));
 }
 
 export function writeSigned(file, obj) {
@@ -83,7 +88,9 @@ export function bindingHash(wranglerVersion) {
   files.push(['edge/package-lock.json', path.join(EDGE_DIR, 'package-lock.json')]);
   // R3 (F-05 residue): the CLI entry, the Edge package manifest and the image recipe (Node version).
   files.push(['deployer/cli.mjs', path.join(DEPLOYER_DIR, 'cli.mjs')], ['edge/package.json', path.join(EDGE_DIR, 'package.json')],
-             ['Dockerfile', path.join(path.dirname(DEPLOYER_DIR), 'Dockerfile')]);
+             ['Dockerfile', path.join(path.dirname(DEPLOYER_DIR), 'Dockerfile')],
+             // R3-16 · the host launcher and the compose file decide how the deployer runs, too.
+             ['kawa-edge', path.join(path.dirname(DEPLOYER_DIR), 'kawa-edge')], ['docker-compose.yml', path.join(path.dirname(DEPLOYER_DIR), 'docker-compose.yml')]);
   const h = crypto.createHash('sha256');
   for (const [r, p] of files.sort((a, b) => (a[0] < b[0] ? -1 : 1))) { h.update(`${r}\0`); h.update(fs.readFileSync(p)); h.update('\0'); }
   h.update(`wrangler@${wranglerVersion}`);

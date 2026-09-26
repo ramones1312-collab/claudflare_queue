@@ -105,3 +105,16 @@ test('writeBuild writes one explicit config per Worker', async () => {
   assert.equal(fs.readdirSync(dir).length, plan.workers.length);
   assert.equal(fs.existsSync(path.join(dir, 'wrangler.toml')), false);   // never an implicit root config
 });
+
+test('D-09 · the build digest does not depend on where the package is installed', async () => {
+  const cfg = await validateConfig(example());
+  const copies = ['/tmp/kawa-d09-a-', '/tmp/kawa-d09-bbbbbbbbbbbb-'].map(p => fs.mkdtempSync(p));
+  try {
+    for (const c of copies) for (const d of ['src', 'staging-receiver', 'admin-worker']) fs.cpSync(path.join(EDGE_DIR, d), path.join(c, d), { recursive: true });
+    const [a, b] = copies.map(c => renderEnv('staging', cfg.envs.staging.destinations, c).workers.map(w => [w.name, w.build]));
+    assert.deepEqual(a, b);
+    fs.appendFileSync(path.join(copies[1], 'src', 'sequencer.js'), '\n');
+    const c = renderEnv('staging', cfg.envs.staging.destinations, copies[1]).workers.map(w => [w.name, w.build]);
+    assert.notDeepEqual(a, c, 'a source change must change the digest');
+  } finally { for (const c of copies) fs.rmSync(c, { recursive: true, force: true }); }
+});

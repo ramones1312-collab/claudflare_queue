@@ -1,7 +1,7 @@
-# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R3.1 — TEST REPORT
+# KAWA VECTOR · EDGE SIGNAL BUFFER V1.3.1 R3.2 — TEST REPORT
 
-**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R3.1 (correcciones R3-01/02/03/07 de la auditoría de R3) · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
-**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r3.1`
+**Identidad:** `edge-signal-buffer-v1.3.1-nas` · R3.2 (auditoría de R3: R3-01…R3-16 cerrados) · **Linaje:** V1.3.1 ← V1.3.0 R4 CANDIDATE
+**Entorno de referencia (NAS-equivalente):** imagen `kawa-edge-deployer:1.3.1-nas-r3.2`
 (`node:22-bookworm-slim@sha256:43ac6c60…772c`, Node 22, wrangler 4.132.0, vitest 2.1.9,
 @cloudflare/vitest-pool-workers 0.5.40), contenedor con rootfs **read-only**, uid **no-root**,
 `cap_drop: ALL`, red bridge **sin salida**, host de 4 vCPU. Resultados exactos, evidencias y tiempos
@@ -18,10 +18,10 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 | Edge · guardián de red hermética (nuevo) | 2 | PASS |
 | Edge · consumer con solo su entrada de `DESTINATIONS` (nuevo) | 3 | PASS |
 | **Edge total** | **95** | **95/95 PASS** |
-| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, veredictos de la puerta con **vitest real**, integridad del ZIP, lanzador bajo enlaces simbólicos y duros, cobertura del binding, ancla por fichero con node:test real, nombres de entrada ZIP canónicos, runner de gates, backlog, id de despliegue) | 58 | PASS |
+| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling, veredictos de la puerta con **vitest real**, integridad del ZIP, lanzador bajo enlaces simbólicos y duros, cobertura del binding, ancla por fichero con node:test real, nombres de entrada ZIP canónicos, estructura del ZIP, pruebas puras de los gates L/ISO-XY/G/K y G00/RB con 3 Hubs, digest independiente de la ruta, runner de gates, backlog, id de despliegue) | 73 | PASS |
 | Deployer · equivalencia con los TOML de R4: **config completo** de los 6 configs (lector de wrangler) | 6 | PASS |
-| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 20 | PASS |
-| **Deployer total** | **84** | **84/84 PASS** |
+| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 22 | PASS |
+| **Deployer total** | **101** | **101/101 PASS** |
 | Ensayo local de gates STAGING (Miniflare, bundles exactos) | 13 ejecutados + 5 `CLOUD_ONLY` | PASS |
 | Gate físico sobre el ZIP final (imagen construida desde la carpeta extraída, lanzador `./kawa-edge`, uid 1026:100) | verify-fast + test-full + rehearse | PASS |
 
@@ -122,5 +122,8 @@ reinicio, la alarma de redispatch del Sequencer real se disparó exactamente a l
 - **Sin cuenta de Cloudflare en este entorno.** El E2E usa un API simulado fiel a los endpoints que el
   wrangler fijado llama; el gate físico real de STAGING lo ejecuta `./kawa-edge install` en el NAS.
 - **Edge → HUB_A no probado** (B-2) y **operación PROD de retry/skip inexistente** (B-1): ver runbook §9.
+- **Limitación de la herramienta (OBS de la auditoría de R3):** un `Promise.reject` no manejado dentro de
+  workerd no lo informa vitest-pool-workers (exit 0). No es un defecto de la puerta; los tests del Edge
+  esperan explícitamente cada promesa.
 - NAS ARM64: la imagen base y el lockfile son multi-arquitectura (workerd/esbuild `linux-arm64`), pero
   solo se ha ejecutado en amd64.

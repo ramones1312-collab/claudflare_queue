@@ -110,3 +110,26 @@ test('N-3 · a hard link planted in state/ never makes root hand a foreign file 
     assert.deepEqual([st.uid, st.gid], [0, 0], 'the linked file changed owner');
   } finally { fs.rmSync(t, { recursive: true, force: true }); }
 });
+
+test('R3-15 · the launcher refuses to run through a symbolic link to it', () => {
+  const t = sandbox();
+  try {
+    ownAsNasUser(t);
+    fs.symlinkSync(path.join(t, 'pkg', 'kawa-edge'), path.join(t, 'ke-link'));
+    const r = spawnSync('sh', [path.join(t, 'ke-link'), 'help'], { cwd: t, encoding: 'utf8', env: { ...process.env, PATH: `${path.join(t, 'bin')}:${process.env.PATH}`, HTTPS_PROXY: '' } });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /not through a symbolic link/);
+    assert.doesNotMatch(r.stdout, /compose/);
+  } finally { fs.rmSync(t, { recursive: true, force: true }); }
+});
+
+test('R3-15 · .env read by docker compose under sudo must be a regular file of the folder owner', () => {
+  const t = sandbox();
+  try {
+    fs.symlinkSync(path.join(t, 'victims', 'file'), path.join(t, 'pkg', '.env'));
+    const r = run(t, ['help']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /\.env must be a regular file/);
+    assert.doesNotMatch(r.stdout, /compose/);
+  } finally { fs.rmSync(t, { recursive: true, force: true }); }
+});

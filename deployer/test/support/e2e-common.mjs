@@ -41,19 +41,19 @@ export async function fakeStagingPass(sb, mock, tamper = {}) {
     if (b) builds[name] = b.text;
   }
   const gates = CLOUD_GATE_IDS.map(id => ({ id, status: id === tamper.skip ? 'SKIPPED' : 'PASS',
-    evidence: id === 'G' ? { dlq: { verified: !tamper.dlqUnverified } } : id === 'K' ? { dispatch_attempts: tamper.noRedispatch ? 1 : 2 } : {} }));
+    evidence: id === 'G' ? { dlq: { verified: !tamper.dlqUnverified } } : id === 'K' ? { dispatch_attempts: tamper.noRedispatch ? 1 : 2, redispatch_after_lease: !tamper.noRedispatch } : {} }));
   // Each call records a NEWER run than the previous one (R3-03: the most recent run of a build governs).
   const started = tamper.started || new Date(Date.now() + (fakeSeq++) * 1000).toISOString();
   const result = tamper.result || 'PASS';
   const ev = { result, target: 'cloud', started, cleanup_errors: tamper.cleanup ? ['resume failed'] : [],
     binding_sha256: tamper.binding || bindingHash(pinnedVersion()), account_id: tamper.account || cfg.cloudflare.account_id,
     destinations_config: runtimeDestinations(tamper.destinations || cfg.staging.destinations),
-    builds: tamper.builds || builds, gates, mandatory_gates: tamper.mandatory || CLOUD_GATE_IDS };
+    builds: tamper.builds || builds, gates: 'gatesRaw' in tamper ? tamper.gatesRaw : gates, destinations: ['HUB_A', 'HUB_B'], mandatory_gates: tamper.mandatory || CLOUD_GATE_IDS };
   const keyFile = path.join(sb.stateDir, '.evidence-key');
   if (!fs.existsSync(keyFile)) fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
   const key = Buffer.from(fs.readFileSync(keyFile, 'utf8').trim(), 'hex');
   const signed = tamper.unsigned ? ev : { ...ev, signature: { alg: 'HMAC-SHA256', key_id: 'test',
-    value: crypto.createHmac('sha256', key).update(canonical(ev)).digest('hex') } };
+    value: tamper.badSigValue ? 'é'.repeat(64) : crypto.createHmac('sha256', key).update(canonical(ev)).digest('hex') } };
   const dir = path.join(sb.stateDir, 'evidence');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `staging-gates-cloud-${started.replace(/[:.]/g, '-')}-${result}.json`), JSON.stringify(signed));

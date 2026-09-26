@@ -28,6 +28,8 @@ test('PROD needs a STAGING PASS: none, or any tampered/insufficient one, is BLOC
       ['other account', { account: 'f'.repeat(32) }],
       ['PROD HUB_A settings never tested', { destinations: [{ id: 'HUB_A', enabled: true, timeout_ms: 20000 }, { id: 'HUB_B', enabled: true, timeout_ms: 10000 }] }],
       ['HUB_A disabled in the tested STAGING run (N-4)', { destinations: [{ id: 'HUB_A', enabled: false, timeout_ms: 10000 }, { id: 'HUB_B', enabled: true, timeout_ms: 10000 }] }],
+      ['gates is not an array (R3-04: a reason, not a crash)', { gatesRaw: 'oops' }],
+      ['signature value is multi-byte garbage (R3-04)', { badSigValue: true }],
       ['STAGING no longer runs the certified builds', { builds: { 'kawa-edge-ingress-stg': 'e'.repeat(64) } }],
     ];
     for (const [name, tamper] of cases) {

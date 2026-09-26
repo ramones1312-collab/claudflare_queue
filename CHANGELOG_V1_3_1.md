@@ -1,4 +1,25 @@
-# CHANGELOG · V1.3.1 (R3.1) respecto de V1.3.0 R4
+# CHANGELOG · V1.3.1 (R3.2) respecto de V1.3.0 R4
+
+## R3.2 (2026-09-26) · cierre de los P3 restantes de la auditoría de R3 (instrucción del owner)
+
+Todos los P3 que R3.1 dejó abiertos. Cada corrección tiene un test y una mutación que la revierte y el test
+la detecta (`delivery/FPC_EVIDENCE/R3.2_negative_controls.txt`, 15/15). `edge/src/**` sigue idéntico a R4.
+
+| Id | Cambio |
+|---|---|
+| R3-04 | `findStagingPass` nunca lanza con un fichero malformado (`gates` no array, firma no hex/multibyte): es un motivo de bloqueo |
+| R3-05 | cerrado por R3-02: los recuentos salen del reporter estructurado; un test que imprime un resumen falso no cambia nada (test) |
+| R3-06 | el comentario de `evidence.mjs` y el RUNBOOK dicen la garantía real de la firma (no protege frente a quien opera la instalación) |
+| R3-08 | RUNBOOK: título de la revisión, aviso F-10 en la fase E, `--confirm-ingress-redeploy=` documentado |
+| R3-09 | controles negativos nuevos: F-11 (`edgeWorkspace`), E-05 (gate L), E-06 (ISO-XY), E-10 (G00/RB con 3 Hubs), D-08 (`resume-queues`), D-09 (digest independiente de la ruta), H-15 (`cutover` verifica el manifiesto antes de preguntar) |
+| R3-10 | `edgeVerdict` identifica los ficheros por ruta relativa (`test/x.test.js`) y falla con cualquier fichero no esperado |
+| R3-11 | `readZip`: solo ficheros regulares (nada de enlaces), cabecera local = directorio central (método, CRC, tamaños, sin descriptor), nada tras el directorio central ni tras el registro final |
+| R3-12 | directorios de herramientas excluidos solo en su sitio fijo (`edge/node_modules`, `edge/.wrangler`…); `*.log` solo en la raíz; ficheros no regulares rechazados |
+| R3-13 | gate G: línea base sin muestra = no verificada; gate K: ≥ 2 publicaciones, ningún fallo de `queue.send` y entrega resuelta ≥ 5 min tras la aceptación (y PROD lo exige) |
+| R3-14 | `verify-release` en otra instalación (el NAS) avisa de que la firma es de otra clave; no rechaza el ZIP genuino |
+| R3-15 | el lanzador no corre a través de un enlace simbólico y exige `.env` normal del dueño; `touch -h` declarado |
+| R3-16 | el binding incluye `kawa-edge` y `docker-compose.yml`; el alcance de un tercer Hub en los gates se declara y se avisa en pantalla |
+| OBS | limitación de vitest-pool-workers (rechazo no manejado dentro de workerd no se informa): declarada en TEST_REPORT §6 |
 
 ## R3.1 (2026-09-26) · correcciones quirúrgicas de la auditoría de R3 (PASS WITH OBSERVATIONS)
 

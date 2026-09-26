@@ -41,3 +41,19 @@ test('rotateProdPathToken writes the config, redeploys the PROD ingress with a N
     assert.deepEqual(puts.map(j => [j.script, j.secret_names]), [['kawa-edge-ingress-prod', ['WEBHOOK_PATH_TOKEN']]]);
   } finally { await mock.close(); delete process.env.CLOUDFLARE_API_BASE_URL; }
 });
+
+test('H-15 · cutover re-verifies the package manifest FIRST: a modified file stops it before any prompt', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { DEPLOYER_DIR, EDGE_DIR } = await import('../lib/paths.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kh15-'));
+  try {
+    fs.writeFileSync(path.join(root, 'x.txt'), 'modified after packaging');
+    fs.writeFileSync(path.join(root, 'MANIFEST_SHA256_V1_3_1.json'), JSON.stringify({ algorithm: 'SHA-256', artifact: 't', revision: 'r', self_hash_excluded: true, file_count: 1, files: { 'x.txt': '0'.repeat(64) } }));
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { cutoverProceed } from ${JSON.stringify(path.join(DEPLOYER_DIR, 'lib', 'prod.mjs'))};
+      try { await cutoverProceed({}, { prompt: async (q) => { console.log('PROMPTED ' + q); return ''; } }); console.log('NO_ERROR'); }
+      catch (e) { console.log('CODE ' + e.code); }`], { encoding: 'utf8', env: { ...process.env, KAWA_ROOT: root, KAWA_EDGE_DIR: EDGE_DIR } });
+    assert.match(r.stdout, /CODE PREFLIGHT_MANIFEST/, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /PROMPTED/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

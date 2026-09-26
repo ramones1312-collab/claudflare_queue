@@ -1,6 +1,6 @@
 # RUNBOOK VIGENTE · KAWA Edge Signal Buffer V1.3.x · multi-destino
 
-**Único runbook en vigor** (V1.3.1 R2). Sustituye a `STAGING_RUNBOOK.md` (V1.2.x, retirado del
+**Único runbook en vigor** (V1.3.1 R3.2). Sustituye a `STAGING_RUNBOOK.md` (V1.2.x, retirado del
 paquete; sigue archivado dentro del ZIP R4). La arquitectura de referencia sigue siendo
 `edge/ARCHITECTURE_V1_3_0.md` y `edge/MIGRATION_AND_DEPLOYMENT_V1_3_0.md`; **los comandos de despliegue los
 ejecuta el instalador**, siempre con `--config` explícito sobre configs generados. No hay que ejecutar
@@ -38,7 +38,7 @@ Códigos de salida: `0 PASS` · `1 FAIL` · `2 BLOCKED` (falta una precondición
 | B · STAGING | `install` | recursos `-stg` y receptores STAGING | directo a HUB_A |
 | C · PROD en paralelo | `prod-deploy`, `hub-check HUB_A` | recursos `-prod`, **inertes** | directo a HUB_A |
 | D · Cutover | `cutover-check`, `cutover` | rota el path token PROD y muestra la URL | **solo aquí** cambia (a mano, por el owner) |
-| E · Más Hubs | `add-hub HUB_N --env staging\|prod` | cola/DLQ/consumer/secreto del nuevo Hub + ingress | sin cambio |
+| E · Más Hubs | `add-hub HUB_N --env staging\|prod` | cola/DLQ/consumer/secreto del nuevo Hub + ingress | sin cambio de URL; **en PROD, tras el cutover, redesplegar el ingress reinicia el Sequencer y una alerta en ese instante puede perderse (F-10)**: hacerlo sin alertas esperadas |
 
 Estado de esta versión: **A y B completos; C despliega pero `hub-check` está BLOQUEADO (B-2); D está
 BLOQUEADO (B-1, B-2).** Ver §9.
@@ -124,10 +124,15 @@ el borrado queda cubierto por los tests de workerd (`contract > 11b`, `R21`).
   - evidencia **firmada** por esta instalación (una copiada, editada o escrita a mano no cuenta);
   - **todos** los gates de la lista fijada en el código (no la que diga el fichero) en PASS, sin errores de
     limpieza; gate G con el registro en la DLQ **verificado en la plataforma** (exige el permiso
-    *Account Analytics: Read*); gate K con redispatch real;
-  - ligada al build exacto: todo el instalador, todo el código del Edge, lockfile y versión de wrangler;
+    *Account Analytics: Read*; una métrica sin muestra no cuenta); gate K con redispatch real tras la lease de
+    5 min (≥ 2 publicaciones, ningún fallo de `queue.send`, entrega resuelta ≥ 5 min tras la aceptación);
+  - el run Cloudflare **más reciente** de ese build (un FAIL/PARTIAL posterior bloquea) y de **≤ 7 días**;
+  - ligada al build exacto: todo el instalador, `cli.mjs`, el lanzador `kawa-edge`, `Dockerfile`,
+    `docker-compose.yml`, todo el código del Edge, `package.json`, lockfile y versión de wrangler;
   - de la misma cuenta de Cloudflare;
-  - cada destino PROD probado en STAGING con **los mismos** `timeout_ms`/`retry`;
+  - cada destino PROD probado en STAGING, habilitado, con **los mismos** `timeout_ms`/`retry`. **Alcance
+    declarado (R3-16):** la batería completa corre sobre los **dos primeros** destinos habilitados; un tercero
+    (HUB_C…) solo pasa G00, el fan-out del gate A y RB. `prod-deploy`/`add-hub --env prod` lo avisan en pantalla;
   - **corroborada en vivo**: los Workers STAGING en Cloudflare deben seguir ejecutando exactamente los
     builds certificados. **No borres STAGING mientras operes PROD**: `add-hub --env prod` también lo exige.
   Sin todo eso: `BLOCKED`, sin escribir nada en PROD.
@@ -144,7 +149,8 @@ el borrado queda cubierto por los tests de workerd (`contract > 11b`, `R21`).
 - Repetirlo no cambia nada (`UNCHANGED`); `--set-webhook HUB_A` o `--set-halt-notify` para cambiar ese
   secreto concreto. **Redesplegar un ingress PROD existente reinicia el Sequencer**: una alerta que llegue
   en ese instante puede recibir 503 y TradingView no la reintenta (se perdería para todos los Hubs). Por eso
-  pide escribir `REDEPLOY PROD INGRESS` y debe hacerse cuando no se esperan alertas. El path token del ingress PROD **solo** se rota en `cutover` (rotarlo en otro momento
+  pide escribir `REDEPLOY PROD INGRESS` (sin teclado: `--confirm-ingress-redeploy="REDEPLOY PROD INGRESS"`) y debe
+  hacerse cuando no se esperan alertas. El path token del ingress PROD **solo** se rota en `cutover` (rotarlo en otro momento
   dejaría a TradingView sin Edge después del cutover).
 
 `sudo ./kawa-edge hub-check HUB_A` → **BLOCKED (B-2)**. No envía nada.
@@ -262,6 +268,13 @@ nada queda referenciado), test E2E de que `cutover` se niega.
 
 - **F-10 · redespliegue del ingress PROD** reinicia el Sequencer (posible 503 no reintentado por TradingView):
   confirmación escrita obligatoria y solo sin alertas esperadas (§4).
+- **R3-15 · lanzador:** en un sistema sin `touch -h`, `refresh-context` podría seguir un enlace que el propio
+  dueño de la carpeta cambie entre `find` y `touch` (fuera de `state/`, `secrets/`, `config/`). DSM tiene
+  `touch -h`. El lanzador se niega a correr a través de un enlace simbólico y exige que `.env` sea un fichero
+  normal del dueño de la carpeta.
+- **Firma de la evidencia (R3-06):** protege frente a ediciones a mano, no frente a quien opera la instalación
+  (con la clave de `state/` y `install --no-gates` se puede forjar un STAGING PASS que la corroboración en vivo
+  no detecta). La garantía para terceros es el gate físico y que el owner ejecute los gates.
 - **F-14 · doble ruta** en cutover/rollback: procedimiento único C9 (§5), impreso por `cutover-check`, `cutover` y `rollback-transport` (R3-07).
 - **H-16 · PROD nunca se ejercita antes de la primera señal real**: consecuencia directa de B-2; queda cubierto
   cuando exista el probe no-trading.

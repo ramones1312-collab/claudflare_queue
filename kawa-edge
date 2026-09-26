@@ -4,6 +4,9 @@
 # Builds the image on first use (then cached: seconds when nothing changed) and runs one command
 # in a throw-away container. Nothing keeps running afterwards.
 set -eu
+# R3-15 · run only as the real file inside the package: through a link, dirname($0) would be the link's
+# folder, not the package.
+[ ! -L "$0" ] || { echo "ERROR: run ./kawa-edge from the package folder itself, not through a symbolic link" >&2; exit 1; }
 cd "$(dirname "$0")"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -31,6 +34,10 @@ export KAWA_UID KAWA_GID
 # planted in state/, secrets/ or config/ (by anyone, or by code in the container, which mounts them)
 # could otherwise make root change or overwrite a file outside this package.
 for p in state secrets config; do [ ! -L "$p" ] || die "$p is a symbolic link; refusing to run"; done
+# R3-15 · docker compose (under sudo) reads .env: it must be a regular file of the folder owner, or absent.
+if [ -e .env ] || [ -L .env ]; then
+  [ ! -L .env ] && [ -f .env ] && [ "$(stat -c %u .env)" = "$KAWA_UID" ] || die ".env must be a regular file owned by the folder owner (uid $KAWA_UID)"
+fi
 mkdir -p state secrets config
 link=$(find state secrets config -type l -print 2>/dev/null | head -n 1)
 [ -z "$link" ] || die "symbolic link found at $link; remove it (nothing was changed)"
@@ -50,7 +57,7 @@ else echo "ERROR: docker compose not found. Install 'Container Manager' from the
 # (size + mtime), and the image would keep the old bytes (the manifest check then refuses to run).
 # So whenever the package manifest differs from the one the image was built from, refresh mtimes.
 # The manifest the image was built from is read from the image itself: root writes no stamp file.
-IMAGE=kawa-edge-deployer:1.3.1-nas-r3.1
+IMAGE=kawa-edge-deployer:1.3.1-nas-r3.2
 refresh_context() {
   cur=$(sha256sum MANIFEST_SHA256_V1_3_1.json 2>/dev/null | cut -d' ' -f1)
   img=$(docker run --rm --network none --entrypoint sha256sum "$IMAGE" /opt/kawa/MANIFEST_SHA256_V1_3_1.json 2>/dev/null | cut -d' ' -f1)

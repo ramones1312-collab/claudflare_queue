@@ -19,15 +19,15 @@ import { localChecks } from './preflight.mjs';
 import { createWrangler, pinnedVersion } from './wrangler.mjs';
 import { buildManifest, verifyManifest, inputTreeHash, listPackageFiles, sha256File, MANIFEST_NAME, testInputFiles } from './manifest.mjs';
 import { writeZip, extractZip, readZip } from './zip.mjs';
-import { writeSigned, verify as verifySignature, readEvidence, hasEvidenceKey } from './evidence.mjs';
+import { writeSigned, verify as verifySignature, readEvidence, hasEvidenceKey, localKeyId } from './evidence.mjs';
 
 export const IDENTITY = {
   artifact: 'edge-signal-buffer-v1.3.1-nas',
-  revision: 'R3.1 · surgical fixes R3-01, R3-02, R3-03, R3-07 of the R3 audit (2026-09-26)',
+  revision: 'R3.2 · R3.1 + all remaining P3 findings of the R3 audit (R3-04..R3-16), owner instruction (2026-09-26)',
   lineage: 'V1.3.1 <- V1.3.0 R4 CANDIDATE (zip sha256 1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867)',
   runtime_code: 'Edge Worker sources byte-identical to V1.3.0 R4',
 };
-export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.1_2026-09-26.zip';
+export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.2_2026-09-26.zip';
 export const EVIDENCE_NAME = 'TEST_EVIDENCE_V1_3_1.json';
 const ZIP_ROOT = 'kawa-edge-nas';
 
@@ -50,17 +50,23 @@ const deployerTests = (filter = null) => fs.readdirSync(path.join(DEPLOYER_DIR, 
  * failed/pending suite, and every test file on disk ran with at least one test, all passed. A file
  * that fails to import contributes 0 failed tests, so counts alone can never decide.
  */
-export function edgeVerdict(res, code, expectedFiles) {
+export function edgeVerdict(res, code, expectedFiles, root = null) {
   const reasons = [];
   if (code !== 0) reasons.push(`vitest exit code ${code}`);
   if (!res) return { ok: false, reasons: [...reasons, 'no JSON result'] };
   if (res.success !== true) reasons.push('runner reports success=false');
   if (res.numFailedTestSuites) reasons.push(`${res.numFailedTestSuites} failed suite(s)`);
   if (res.numFailedTests || res.numPendingTests || res.numTodoTests) reasons.push('failed/pending/todo tests');
-  const ran = new Map(res.testResults.map(t => [path.basename(t.name), t]));
+  // R3-10 · files are identified by their path relative to the workspace (test/x.test.js), never by
+  // basename: a decoy with the same name in a subdirectory is an unexpected file, not the expected one.
+  const key = (n) => (root ? path.relative(root, n) : path.basename(n));
+  const want = (f) => (root ? `test/${f}` : f);
+  const ran = new Map(res.testResults.map(t => [key(t.name), t]));
+  const wanted = new Set(expectedFiles.map(want));
+  for (const k of ran.keys()) if (!wanted.has(k)) reasons.push(`${k}: ran but is not an expected test file`);
   for (const f of expectedFiles) {
-    const t = ran.get(f);
-    if (!t) { reasons.push(`${f} did not run`); continue; }
+    const t = ran.get(want(f));
+    if (!t) { reasons.push(`${want(f)} did not run`); continue; }
     if (t.status !== 'passed') reasons.push(`${f}: ${t.status}${t.message ? ' — ' + String(t.message).slice(0, 200) : ''}`);
     if (!t.assertionResults.length) reasons.push(`${f}: 0 tests`);
     if (t.assertionResults.some(a => a.status !== 'passed')) reasons.push(`${f}: a test did not pass`);
@@ -129,7 +135,7 @@ async function runDeployerSuite(files) {
  * image's own files (same bytes; the config file itself is copied and hash-checked). Unique and SHORT
  * path per run (workerd socket paths have a length limit).
  */
-function edgeWorkspace() {
+export function edgeWorkspace() {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'kt-'));
   for (const e of fs.readdirSync(EDGE_DIR)) {
     if (e === 'vitest.config.js') continue;
@@ -159,7 +165,7 @@ async function runEdgeSuite(files = []) {
   const summary = (r.text.match(/Test Files .*|Tests .*|Duration .*/g) || []).map(s => s.trim());
   for (const s of summary) out.info(s);
   const expected = files.length ? files.map(f => path.basename(f)) : edgeTestFiles();
-  const v = edgeVerdict(res, r.code, expected);
+  const v = edgeVerdict(res, r.code, expected, ws);
   for (const x of v.reasons) out.fail(`edge suite: ${x}`);
   if (!res) return { ok: false, reasons: v.reasons, pass: 0, fail: 1, ms: r.ms, code: r.code, tail: r.text.slice(-2000) };
   // vitest reports paths inside the (already removed) workspace: make them relative to it, lexically.
@@ -352,9 +358,14 @@ export async function verifyRelease(ctx, f) {
     out.ok(`test evidence bound to these bytes: input tree ${h.slice(0, 16)}… · Edge ${ev.edge_suite.pass}/${ev.edge_suite.total} (exit 0) · deployer ${ev.deployer_suite.pass}/${ev.deployer_suite.tests} (exit 0)`);
     // N-2 · the HMAC key is local to the installation that ran the tests. Where that key exists, an
     // unsigned or altered record is refused; elsewhere the signature cannot be checked, and we say so.
-    if (hasEvidenceKey()) {
+    // R3-14 · signed by ANOTHER installation (e.g. the developer's, verified on the NAS): not checkable
+    // here, a warning, never a refusal of the genuine ZIP. Unsigned, or signed with this key and wrong: FAIL.
+    const kid = ev && ev.signature && ev.signature.key_id;
+    if (hasEvidenceKey() && (!kid || kid === localKeyId())) {
       if (!verifySignature(ev)) throw new KawaError('EVIDENCE_UNSIGNED', 'packaged test evidence is not signed by this installation');
       out.ok('test evidence signature verified (this is the installation that produced it)');
+    } else if (hasEvidenceKey()) {
+      out.warn(`test evidence signed by another installation (key ${String(kid).slice(0, 12)}): not verifiable here; the record is not proof`);
     } else {
       out.warn('test evidence signature NOT verifiable here (HMAC key is local to the producing installation): the record is not proof');
     }

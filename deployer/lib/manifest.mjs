@@ -12,8 +12,11 @@ export const MANIFEST_NAME = 'MANIFEST_SHA256_V1_3_1.json';
 
 /** Never part of the package. */
 const EXCLUDE_DIRS = new Set(['state', 'dist', 'build', 'delivery']);   // delivery/: notes for reviewers, not package content
-const ANYWHERE = new Set(['node_modules', '.git', '.wrangler', '.vite']);
-const EXCLUDE_FILES = [/^secrets\/(?!README\.md$)/, /^config\/kawa-edge\.json(\.bak-.*)?$/, /\.log$/, /^\.claude\//];
+// R3-12 · tool directories are excluded ONLY where the tools create them; anywhere else they are package
+// content (hashed), so e.g. edge/test/.wrangler/x.test.js changes the input-tree hash.
+const TOOL_DIRS = new Set(['node_modules', '.git', '.claude', '.wrangler', '.vite',
+                           'edge/node_modules', 'edge/.wrangler', 'edge/.vite']);
+const EXCLUDE_FILES = [/^secrets\/(?!README\.md$)/, /^config\/kawa-edge\.json(\.bak-.*)?$/, /^[^/]+\.log$/];
 
 export function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -24,13 +27,13 @@ export function listPackageFiles(root) {
   (function walk(rel) {
     for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
       const r = rel ? `${rel}/${e.name}` : e.name;
-      // F-12 · exclusions apply at the ROOT only (edge/src/state/x.js is package content), except
-      // node_modules/.git/.wrangler/.vite anywhere.
-      const excluded = ANYWHERE.has(e.name) || (!rel && EXCLUDE_DIRS.has(e.name));
+      // F-12 · exclusions apply at the ROOT only (edge/src/state/x.js is package content); R3-12 · tool
+      // directories only at their fixed places.
+      const excluded = TOOL_DIRS.has(r) || (!rel && EXCLUDE_DIRS.has(e.name));
       if (e.isDirectory()) { if (!excluded) walk(r); continue; }
       // A symlink inside the package is refused, never silently skipped (it could hide test inputs).
       if (e.isSymbolicLink()) { if (!excluded) throw new Error(`symbolic link in the package: ${r}`); continue; }
-      if (!e.isFile()) continue;
+      if (!e.isFile()) throw new Error(`not a regular file in the package: ${r}`);   // R3-12 · fifo, socket, device
       if (EXCLUDE_FILES.some(re => re.test(r))) continue;
       outFiles.push(r);
     }

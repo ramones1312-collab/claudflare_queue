@@ -88,3 +88,37 @@ test('R3-02 · the anchor declares exactly the deployer test files on disk', () 
   const { reasons } = expectedDeployerTests([]);
   assert.deepEqual(reasons, []);
 });
+
+test('R3-05 · a test that prints a forged node:test summary cannot change the verdict', () => {
+  const forged = T + "test('a', () => { console.log('ℹ tests 81\\nℹ pass 81\\nℹ fail 0'); });\n";
+  const r = realNodeRun({ 'x.test.mjs': two, 'f.test.mjs': forged });
+  const v = deployerVerdict(r.events, r.code, { 'x.test.mjs': 2, 'f.test.mjs': 1 });
+  assert.equal(v.ok, true);
+  assert.equal(v.tests, 3, 'counts come from the structured events, not from printed text');
+});
+
+test('R3-10 · Edge files are identified by path: a same-name decoy in a subdirectory is FAIL', () => {
+  const ws = '/w';
+  const file = (n, status = 'passed') => ({ name: `${ws}/${n}`, status, assertionResults: [{ status: 'passed' }] });
+  const ok = { success: true, numFailedTestSuites: 0, numFailedTests: 0, testResults: [file('test/a.test.js')] };
+  assert.equal(edgeVerdict(ok, 0, ['a.test.js'], ws).ok, true);
+  const decoy = { ...ok, testResults: [file('test/sub/a.test.js')] };   // the real test/a.test.js excluded, decoy ran
+  const v = edgeVerdict(decoy, 0, ['a.test.js'], ws);
+  assert.equal(v.ok, false);
+  assert.ok(v.reasons.some(r => /test\/a\.test\.js did not run/.test(r)) && v.reasons.some(r => /test\/sub\/a\.test\.js: ran but is not an expected/.test(r)), v.reasons.join('; '));
+});
+
+test('F-11 · the Edge workspace creates the missing target of node_modules/.vite (else vitest exits 1 after a green run)', () => {
+  const edge = fs.mkdtempSync(path.join(os.tmpdir(), 'kf11-'));
+  try {
+    fs.mkdirSync(path.join(edge, 'node_modules'));
+    fs.writeFileSync(path.join(edge, 'vitest.config.js'), 'export default {};\n');
+    fs.symlinkSync('../vite-cache-target', path.join(edge, 'node_modules', '.vite'));       // dangling, as in the image
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { edgeWorkspace } from ${JSON.stringify(path.join(DEPLOYER_DIR, 'lib', 'release.mjs'))}; const ws = edgeWorkspace(); process.stdout.write(ws);`],
+      { encoding: 'utf8', env: { ...process.env, KAWA_EDGE_DIR: edge } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(fs.existsSync(path.join(edge, 'vite-cache-target')), 'the .vite link target was not created');
+    fs.rmSync(r.stdout, { recursive: true, force: true });
+  } finally { fs.rmSync(edge, { recursive: true, force: true }); }
+});

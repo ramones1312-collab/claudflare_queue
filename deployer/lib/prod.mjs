@@ -176,13 +176,14 @@ export async function findStagingPass(cfg, { prodDests = null, now = Date.now() 
   else if (now - t > STAGING_PASS_MAX_AGE_DAYS * 86400e3) why.push(`older than ${STAGING_PASS_MAX_AGE_DAYS} days (${e.started}): re-run ./kawa-edge gates`);
   else if (t - now > 3600e3) why.push(`start time in the future (${e.started})`);
   if ((e.cleanup_errors || []).length) why.push('cleanup errors');
-  const byId = new Map((e.gates || []).map(g => [g.id, g]));
+  // R3-04 · a malformed record is a reason, never an exception that would hide every other file.
+  const byId = new Map((Array.isArray(e.gates) ? e.gates : []).filter(g => g && typeof g === 'object').map(g => [g.id, g]));
   const missing = CLOUD_GATE_IDS.filter(id => !byId.has(id) || byId.get(id).status !== 'PASS');
   if (missing.length) why.push(`gates not PASS: ${missing.join(',')}`);
   const g = byId.get('G');
   if (!(g && g.evidence && g.evidence.dlq && g.evidence.dlq.verified === true)) why.push('DLQ record not platform-verified (gate G; needs Account Analytics: Read)');
   const k = byId.get('K');
-  if (!(k && k.evidence && k.evidence.dispatch_attempts >= 2)) why.push('no redispatch proven (gate K)');
+  if (!(k && k.evidence && k.evidence.dispatch_attempts >= 2 && k.evidence.redispatch_after_lease === true)) why.push('no redispatch after the 5-min lease proven (gate K)');
   if (e.account_id !== cfg.account_id) why.push('different Cloudflare account');
   try {
     const tested = parse(e.destinations_config || []);
@@ -192,6 +193,9 @@ export async function findStagingPass(cfg, { prodDests = null, now = Date.now() 
       // N-4 · a destination that was DISABLED in STAGING received no signal from the gates: not tested.
       else if (td.enabled === false) why.push(`${id} was disabled in the STAGING run: never gate-tested`);
       else if (JSON.stringify([td.timeout_ms, td.retry]) !== JSON.stringify([d.timeout_ms, d.retry])) why.push(`${id}: PROD timeout/retry differ from what STAGING tested`);
+      // R3-16 · declared scope: only the two gated destinations run the full gate set; any other one ran
+      // G00, the fan-out of A and RB only. Said on screen, not hidden.
+      else if (Array.isArray(e.destinations) && !e.destinations.includes(id)) out.warn(`${id}: STAGING ran only G00/fan-out/RB for it (full gates ran on ${e.destinations.join(', ')})`);
     }
   } catch (err) { why.push(`destinations: ${err.code || err.message}`); }
   if (!why.length) return { pass: { file: n, e } };
@@ -358,14 +362,18 @@ export async function cutover(ctx, f) {
     return { result: 'BLOCKED', detail: res.detail, report: res.report };
   }
   // Unreachable while B-1/B-2 stand; the rotation itself is tested directly (rotateProdPathToken).
-  const cfg = await loadConfig(ctx.configFile);
+  return cutoverProceed(await loadConfig(ctx.configFile));
+}
+
+/** After every automatic precondition passed: manifest re-verified FIRST (H-15), then the typed attestations. */
+export async function cutoverProceed(cfg, { prompt = promptLine } = {}) {
   await localChecks({ cfg, env: 'prod', wrangler: createWrangler({ quiet: true }), dryRun: false, inContainer: !!process.env.KAWA_IN_CONTAINER });  // H-15 · manifest re-verified
-  const green = await promptLine('C5 · Type HUB_A IS GREEN after checking the Hub UI (8180) yourself: ');
+  const green = await prompt('C5 · Type HUB_A IS GREEN after checking the Hub UI (8180) yourself: ');
   if (green !== 'HUB_A IS GREEN') return { result: 'BLOCKED', detail: 'HUB_A GREEN not attested' };
   printProcedure();
-  const win = await promptLine('C9 · Type ROUTE SWITCH WINDOW READY once steps 1-2 hold: ');
+  const win = await prompt('C9 · Type ROUTE SWITCH WINDOW READY once steps 1-2 hold: ');
   if (win !== 'ROUTE SWITCH WINDOW READY') return { result: 'BLOCKED', detail: 'route-switch window not confirmed' };
-  const phrase = await promptLine('Type exactly "CUTOVER HUB_A APPROVED" (owner): ');
+  const phrase = await prompt('Type exactly "CUTOVER HUB_A APPROVED" (owner): ');
   if (phrase !== 'CUTOVER HUB_A APPROVED') return { result: 'BLOCKED', detail: 'owner approval not given' };
   const cloud = await cloudContext(cfg);
   const { url } = await rotateProdPathToken(cfg, cloud);

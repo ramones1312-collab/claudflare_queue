@@ -1,4 +1,4 @@
-# KAWA VECTOR · Edge Signal Buffer · INSTALACIÓN EN EL NAS (V1.3.1 R3.1)
+# KAWA VECTOR · Edge Signal Buffer · INSTALACIÓN EN EL NAS (V1.3.1 R3.2)
 
 Todo corre en **un contenedor temporal** en tu Synology: no instalas Node, npm ni Wrangler en Windows, no
 creas nada a mano en el dashboard de Cloudflare y no editas TOML. El contenedor **no publica puertos, no
@@ -17,13 +17,13 @@ comparte nada con HUB_A** y termina al acabar cada comando.
 
 ## 1. Subir, verificar **antes** de extraer, y extraer
 
-1. Copia `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.1_2026-09-26.zip` **y** su `.sha256` a
+1. Copia `KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.2_2026-09-26.zip` **y** su `.sha256` a
    `/volume1/docker/kawa-edge-deployer/` (File Station). **No lo extraigas todavía.**
 2. Por SSH, comprueba el hash con la herramienta del sistema (no con nada que venga dentro del ZIP):
 
 ```sh
 cd /volume1/docker/kawa-edge-deployer
-head -n 1 KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.1_2026-09-26.zip.sha256 | sha256sum -c -   # → ...zip: OK
+head -n 1 KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.2_2026-09-26.zip.sha256 | sha256sum -c -   # → ...zip: OK
 ```
 
    El hash de la primera línea debe ser además el que te dio el desarrollador por otro canal. La segunda

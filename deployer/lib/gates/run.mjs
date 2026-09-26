@@ -96,6 +96,26 @@ function strictOrder(observations, seqs) {
 /** The Cloudflare gate list is fixed HERE, in code; evidence can never declare its own list (F-04). */
 export const CLOUD_GATE_IDS = Object.freeze(['G00', 'A', 'C', 'E', 'D', 'F', 'M', 'ISO-X', 'ISO-Y', 'ISO-XY', 'G', 'H', 'I', 'J', 'L', 'K', 'BYTE', 'RB']);
 
+// Pure proof checks used by the gates (unit-tested: R3-09 negative controls, R3-13).
+/** E-05 · gate L: the ingress deployment id is known before and after, and changed. */
+export const restartProven = (dep0, dep1) => dep0 !== null && dep0 !== undefined && dep1 !== null && dep1 !== undefined && dep0 !== dep1;
+/** E-06 · ISO-XY: the signal is durable and pending for BOTH paused destinations (exactly two rows). */
+export const pendingForBoth = (sig, X, Y) => {
+  const xy = (sig && sig.deliveries || []).filter(d => d.destination_id === X || d.destination_id === Y);
+  return !!(sig && sig.found && sig.received) && xy.length === 2 && xy.every(d => ['PENDING_DISPATCH', 'DISPATCHED'].includes(d.state));
+};
+/** R3-13 · gate G: a DLQ baseline is usable only if readable AND sampled (null = unknown, never 0). */
+export const dlqBaselineUsable = (base) => !!(base && base.readable && base.value !== null && base.value !== undefined);
+/** R3-13 · gate K: proof of the 5-min redispatch lease for destination X of a signal. */
+export function redispatchProof(sig, X, lease_ms = 5 * 60 * 1000) {
+  const dx = sig && (sig.deliveries || []).find(d => d.destination_id === X);
+  if (!dx || !(dx.dispatch_attempts >= 2)) return { ok: false, reason: `no redispatch observed (dispatch_attempts ${dx && dx.dispatch_attempts})` };
+  if (dx.last_error) return { ok: false, reason: `a queue.send failed (${dx.last_error}): dispatch_attempts does not prove the lease` };
+  const waited = dx.resolved_ms != null && sig.edge_received_ms != null ? dx.resolved_ms - sig.edge_received_ms : null;
+  if (waited === null || waited < lease_ms) return { ok: false, reason: `delivery resolved ${waited} ms after acceptance: shorter than the ${lease_ms} ms lease` };
+  return { ok: true, dispatch_attempts: dx.dispatch_attempts, waited_ms: waited };
+}
+
 export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   const T = kind === 'cloud' ? { deliver: 180e3, halt: 420e3, lost: 420e3 } : { deliver: 90e3, halt: 240e3, lost: 240e3 };
   const qX = names.queue('staging', X), qY = names.queue('staging', Y);
@@ -222,7 +242,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
       seqs = [(await h.send('ISO-XY')).seq, (await h.send('ISO-XY')).seq];
       await sleep(15000);
       for (const d of [X, Y]) expect((await h.obs(d, seqs)).length === 0, `${d} received while paused`);
-      for (const s of seqs) { const sig = await h.signal(s); const xy = sig.deliveries.filter(d => d.destination_id === X || d.destination_id === Y); expect(sig.found && sig.received && xy.length === 2 && xy.every(d => ['PENDING_DISPATCH', 'DISPATCHED'].includes(d.state)), `seq ${s} not durable/pending for both ${X} and ${Y}`); }
+      for (const s of seqs) expect(pendingForBoth(await h.signal(s), X, Y), `seq ${s} not durable/pending for both ${X} and ${Y}`);
       await t.resume(qY);
       await h.waitFor(`${Y} converges first`, () => h.got2xx(Y, seqs), T.halt);
       expect((await h.obs(X, seqs)).length === 0, `${X} received while still paused`);
@@ -250,9 +270,10 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
     // haltedDlq() only after DLQ.send() is confirmed; workerd test CASE H).
     let dlq;
     const base = st.dlqBaseline;
-    if (!base || !base.readable) dlq = { verified: false, basis: 'contract (R4 CASE H); backlog metric unreadable (Account Analytics: Read missing or API error) — does NOT authorise PROD' };
+    // R3-13 · a readable metric with NO sample (value null) is unknown, not 0 (E-08): not verified either.
+    if (!dlqBaselineUsable(base)) dlq = { verified: false, basis: 'contract (R4 CASE H); backlog metric unreadable (Account Analytics: Read missing or API error) — does NOT authorise PROD' };
     else {
-      const from = base.value ?? 0;
+      const from = base.value;
       const b = await h.waitFor(`${Y} DLQ backlog > ${from}`, async () => { const v = await t.dlqBacklog(names.dlq('staging', Y)); return v && v.readable && v.value !== null && v.value > from ? v.value : null; }, 300e3);
       dlq = { verified: true, backlog_before: from, backlog_after: b };
     }
@@ -316,7 +337,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
       await t.redeployIngress();
       const dep1 = await t.deploymentId();
       // Proof that the ingress (and so its Durable Object) was really replaced, not merely still up.
-      expect(dep0 !== null && dep1 !== null && dep0 !== dep1, `ingress deployment id ${dep0} -> ${dep1}: no proven restart`);
+      expect(restartProven(dep0, dep1), `ingress deployment id ${dep0} -> ${dep1}: no proven restart`);
       restart = { from: dep0, to: dep1 };
       await h.waitFor('ingress back after redeploy', async () => { try { return (await t.fetch(`${t.base.ingress}/`, { method: 'GET' })).status === 405; } catch { return false; } }, T.deliver);
       const after = await h.stats();
@@ -343,9 +364,10 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
     const o = await h.obs(X, [a.seq]);
     expect(o.filter(x => x.outcome === 'ACCEPTED').length === 1, 'accepted more than once');
     // The point of K: the Sequencer's 5-min redispatch lease REPUBLISHED the delivery (F-17).
-    const dx = (await h.signal(a.seq)).deliveries.find(d => d.destination_id === X);
-    expect(dx && dx.dispatch_attempts >= 2, `no redispatch observed (dispatch_attempts ${dx && dx.dispatch_attempts})`);
-    return { edge_seq: a.seq, observations: o.map(x => x.outcome), dispatch_attempts: dx.dispatch_attempts };
+    // R3-13 · >= 2 publications, no failed queue.send, resolved at least one lease after acceptance.
+    const k = redispatchProof(await h.signal(a.seq), X);
+    expect(k.ok, k.reason);
+    return { edge_seq: a.seq, observations: o.map(x => x.outcome), dispatch_attempts: k.dispatch_attempts, redispatch_after_lease: true, waited_ms: k.waited_ms };
   }, { optional: !includeLong, cloudOnly: true });
 
   gate('BYTE', 'Byte-for-byte: every delivered body hashes to what was sent', async (h) => {

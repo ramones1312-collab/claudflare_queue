@@ -44,6 +44,10 @@ export function readZip(file) {
   const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (eocd < 0) throw new Error('not a zip file');
   const count = buf.readUInt16LE(eocd + 10);
+  // R3-11 · the end record must be the LAST 22 bytes (no comment, nothing appended) and the central
+  // directory must end exactly where it starts: no bytes hidden between or after them.
+  if (buf.readUInt16LE(eocd + 20) !== 0 || eocd + 22 !== buf.length) throw new Error('zip has bytes after its end record');
+  if (buf.readUInt32LE(eocd + 16) + buf.readUInt32LE(eocd + 12) !== eocd) throw new Error('zip has bytes between its central directory and its end record');
   const LIMIT = 256 * 1024 * 1024;                    // the package is < 1 MiB; refuse zip bombs
   let total = 0;
   let p = buf.readUInt32LE(eocd + 16);
@@ -56,12 +60,18 @@ export function readZip(file) {
     const method = buf.readUInt16LE(p + 10), crc = buf.readUInt32LE(p + 16), csize = buf.readUInt32LE(p + 20);
     const nlen = buf.readUInt16LE(p + 28), xlen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32);
     const attr = buf.readUInt32LE(p + 38), lo = buf.readUInt32LE(p + 42);
+    // R3-11 · only regular files (unix type bits 0o100000 or none): a symlink entry would be created by unzip.
+    const type = (attr >>> 16) & 0o170000;
+    if (type !== 0 && type !== 0o100000) throw new Error(`zip entry is not a regular file (type ${type.toString(8)})`);
     const name = buf.toString('utf8', p + 46, p + 46 + nlen);
     // N-5 · duplicate names extract last-wins and differently across unzip tools: refuse them.
     if (seen.has(name)) throw new Error(`duplicate entry in zip: ${name}`);
     seen.add(name);
     if (buf.readUInt32LE(lo) !== 0x04034b50 || buf.toString('utf8', lo + 30, lo + 30 + buf.readUInt16LE(lo + 26)) !== name) throw new Error(`local header does not match the central directory: ${name}`);
     const lnlen = buf.readUInt16LE(lo + 26), lxlen = buf.readUInt16LE(lo + 28);
+    // R3-11 · the local header must agree with the central directory (method, CRC, sizes, no data descriptor).
+    if (buf.readUInt16LE(lo + 6) & 0x8 || buf.readUInt16LE(lo + 8) !== method || buf.readUInt32LE(lo + 14) !== crc
+        || buf.readUInt32LE(lo + 18) !== csize || buf.readUInt32LE(lo + 22) !== buf.readUInt32LE(p + 24)) throw new Error(`local header differs from the central directory: ${name}`);
     const raw = buf.subarray(lo + 30 + lnlen + lxlen, lo + 30 + lnlen + lxlen + csize);
     const usize = buf.readUInt32LE(p + 24);
     total += usize;
