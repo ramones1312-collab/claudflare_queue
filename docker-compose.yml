@@ -3,8 +3,9 @@
 #   sudo ./kawa-edge install          (recommended: the launcher sets the user and builds once)
 #   sudo docker compose run --rm installer install     (equivalent, by hand)
 #
-# Isolation from HUB_A, by construction: no ports, its OWN project network (Internet egress only; not
-# Docker's shared default bridge, so no other container is reachable),
+# Isolation from HUB_A, by construction: no ports, its OWN project network (not Docker's shared default
+# bridge, so no other container sits on its network; the deployer never connects to the NAS or its
+# published ports — it only calls api.cloudflare.com and *.workers.dev),
 # not privileged, all capabilities dropped, read-only root filesystem, no volume shared with any
 # other container. Only three folders of THIS package are mounted.
 name: kawa-edge-deployer

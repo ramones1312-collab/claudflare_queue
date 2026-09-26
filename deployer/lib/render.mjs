@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { names, slug, MANAGED_VAR, BUILD_VAR, managedValue, belongsTo } from './naming.mjs';
 import { runtimeDestinations } from './config.mjs';
 import { KawaError } from './log.mjs';
@@ -270,7 +271,7 @@ export function edgeSourcesHash(edgeDir) {
  * Change any of them and an old STAGING PASS no longer authorises PROD.
  */
 export function stagingBindingHash(edgeDir, wranglerVersion) {
-  const here = path.dirname(new URL(import.meta.url).pathname);
+  const here = path.dirname(fileURLToPath(import.meta.url));
   const h = crypto.createHash('sha256');
   h.update(edgeSourcesHash(edgeDir));
   for (const f of ['render.mjs', 'naming.mjs']) h.update(fs.readFileSync(path.join(here, f)));

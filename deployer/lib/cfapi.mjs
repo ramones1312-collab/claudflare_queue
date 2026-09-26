@@ -110,8 +110,11 @@ export function createCfApi({ token, accountId, base = apiBase() }) {
       const query = `query($a:String!,$q:String!,$s:Time!){viewer{accounts(filter:{accountTag:$a}){queueBacklogAdaptiveGroups(limit:1,filter:{queueId:$q,datetime_geq:$s},orderBy:[datetimeMinute_DESC]){avg{messages}}}}}`;
       try {
         const j = await call('POST', '/graphql', { body: { query, variables: { a: accountId, q: queueId, s: since } }, perm: 'analytics' });
-        const g = j && j.data && j.data.viewer.accounts[0].queueBacklogAdaptiveGroups[0];
-        return g ? g.avg.messages : 0;
+        // GraphQL reports a missing permission as HTTP 200 + errors: that is UNKNOWN (null), never 0.
+        if (!j || (j.errors && j.errors.length) || !j.data || !j.data.viewer || !(j.data.viewer.accounts || []).length) return null;
+        const rows = j.data.viewer.accounts[0].queueBacklogAdaptiveGroups;
+        if (!Array.isArray(rows)) return null;
+        return rows.length ? Number(rows[0].avg.messages) : 0;   // a successful query with no rows = empty
       } catch { return null; }
     },
   };

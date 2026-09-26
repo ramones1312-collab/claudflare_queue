@@ -228,6 +228,7 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
   }, cloudOnly);
 
   gate('G', `FAILED_PERMANENT on ${Y} (permanent 4xx): DLQ record (platform-verified when readable), halt of ${Y} only; ${X} delivers`, async (h, t) => {
+    st.dlqBaseline = await t.dlqBacklog(names.dlq('staging', Y));
     await h.control(Y, 'permanent4xx');
     const a = await h.send('G');
     st.s1 = a.seq;
@@ -243,11 +244,12 @@ export function defineGates({ X, Y, all = [X, Y], includeLong, kind }) {
     // evidence says so explicitly: the record is then proven only by contract (the consumer calls
     // haltedDlq() only after DLQ.send() is confirmed; workerd test CASE H).
     let dlq;
-    const first = await t.dlqBacklog(names.dlq('staging', Y));
+    const first = st.dlqBaseline;
     if (first === null) dlq = { verified: false, basis: 'contract (R4 CASE H); backlog metric unreadable without Account Analytics: Read' };
     else {
-      const b = await h.waitFor(`${Y} DLQ backlog >= 1`, async () => { const v = await t.dlqBacklog(names.dlq('staging', Y)); return v >= 1 ? v : null; }, 300e3);
-      dlq = { verified: true, backlog: b };
+      // Nobody consumes the DLQ, so earlier runs leave records: require it to GROW past this baseline.
+      const b = await h.waitFor(`${Y} DLQ backlog > ${first}`, async () => { const v = await t.dlqBacklog(names.dlq('staging', Y)); return v !== null && v > first ? v : null; }, 300e3);
+      dlq = { verified: true, backlog_before: first, backlog_after: b };
     }
     return { edge_seq: a.seq, state: dy.state, halt_reason: dy.halt_reason, halted_seq: a.seq, dlq };
   });
@@ -386,11 +388,14 @@ export async function repairStaging(t, secrets, ids) {
   await h.waitFor('staging drained', async () => { const x = await h.stats(); return ids.every(id => x.destinations[id].unresolved === 0); }, 600e3);
 }
 
-export async function runGates({ target, secrets, dests, all = dests, includeLong = false, evidenceDir, meta = {} }) {
+export async function runGates({ target, secrets, dests, all = dests, includeLong = false, evidenceDir, meta = {}, gatesOverride = null }) {
   const [X, Y] = dests;
   const runId = crypto.randomBytes(4).toString('hex');
-  const h = harness(target, secrets, runId);
-  const gates = defineGates({ X, Y, all, includeLong, kind: target.kind });
+  // After Ctrl-C no gate may pause a queue again (cleanup has already resumed them).
+  let abortedRef = () => false;
+  const guarded = { ...target, pause: async (q) => { if (abortedRef()) throw new GateFail('aborted'); return target.pause(q); } };
+  const h = harness(guarded, secrets, runId);
+  const gates = gatesOverride || defineGates({ X, Y, all, includeLong, kind: target.kind });   // override: runner tests only
   const results = [];
   let failed = null;
   const t0 = Date.now();
@@ -402,7 +407,9 @@ export async function runGates({ target, secrets, dests, all = dests, includeLon
       try { await h.control(d, 'ok'); } catch (err) { cleanupErrors.push(`receiver ${d}: ${redact(err.message)}`); }
     }
   };
-  const onSignal = (sig) => { out.warn(`${sig}: restoring STAGING (resuming queues) before exit…`); cleanup().finally(() => process.exit(130)); };
+  let aborted = false;
+  const onSignal = (sig) => { aborted = true; out.warn(`${sig}: restoring STAGING (resuming queues) before exit…`); cleanup().finally(() => process.exit(130)); };
+  abortedRef = () => aborted;
   process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal);
   out.step(`STAGING gates · target=${target.kind} · destinations ${X}, ${Y} · run ${runId}`);
   try {
@@ -412,7 +419,7 @@ export async function runGates({ target, secrets, dests, all = dests, includeLon
       if (g.optional) { results.push({ id: g.id, title: g.title, status: 'SKIPPED', note: 'long gate skipped (--quick): this run is PARTIAL and is not a STAGING PASS' }); out.warn(`skip  ${g.id} ${g.title} (--quick)`); continue; }
       const g0 = Date.now();
       try {
-        const evidence = await g.run(h, target);
+        const evidence = await g.run(h, guarded);
         results.push({ id: g.id, title: g.title, status: 'PASS', duration_ms: Date.now() - g0, evidence });
         out.ok(`${g.id.padEnd(6)} ${g.title} (${Math.round((Date.now() - g0) / 1000)} s)`);
       } catch (err) {

@@ -18,7 +18,7 @@ import { localChecks, cloudChecks } from './preflight.mjs';
 import { execute, loadDeployed, secretsFingerprint } from './deploy.mjs';
 import { names } from './naming.mjs';
 import { promptHidden, validateWebhookUrl, checkAndRecordFingerprint, ensureStagingSecrets, loadStagingSecrets } from './secrets.mjs';
-import { cloudContext, writeReport, stagingSecretsFor } from './commands.mjs';
+import { cloudContext, writeReport, stagingSecretsFor, hubHostsOf } from './commands.mjs';
 
 export async function addHub(ctx, f) {
   const id = String(f._[0] || '').toUpperCase();
@@ -45,7 +45,7 @@ export async function addHub(ctx, f) {
   let secretsFor = () => null;
   let commit = () => {};
   if (env === 'staging') {
-    const { secrets } = ensureStagingSecrets(next.envs.staging.parsed.map(d => d.id), null);
+    const { secrets } = ensureStagingSecrets(next.envs.staging.parsed.map(d => d.id), null, hubHostsOf(next));
     secretsFor = stagingSecretsFor(secrets);
     for (const w of local.plan.workers) w.secretsFp = secretsFingerprint(secretsFor(w));
   }

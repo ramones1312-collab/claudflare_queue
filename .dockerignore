@@ -17,3 +17,4 @@ build
 *.zip
 *.sha256
 .claude
+config/*.tmp-*

@@ -18,10 +18,10 @@ del RC en `TEST_EVIDENCE_V1_3_1.json` (ligado por hash a los bytes del paquete) 
 | Edge · guardián de red hermética (nuevo) | 2 | PASS |
 | Edge · consumer con solo su entrada de `DESTINATIONS` (nuevo) | 3 | PASS |
 | **Edge total** | **95** | **95/95 PASS** |
-| Deployer · unit (render, aislamiento, config, secretos, redacción, release tooling) | 15 | PASS |
+| Deployer · unit (render, aislamiento, config, secretos, URL de halts, redacción, release tooling) | 18 | PASS |
 | Deployer · equivalencia semántica con los TOML de R4 (lector de wrangler) | 3 | PASS |
-| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 14 | PASS |
-| **Deployer total** | **32** | **32/32 PASS** |
+| Deployer · E2E instalador (CLI real + wrangler fijado vs API Cloudflare simulado) | 16 | PASS |
+| **Deployer total** | **37** | **37/37 PASS** |
 | Ensayo local de gates STAGING (Miniflare, bundles exactos) | 13 ejecutados + 5 `CLOUD_ONLY` | PASS |
 
 **Ningún test de R4 se modificó, se saltó ni se relajó.** Ningún timeout se aumentó.
@@ -65,9 +65,10 @@ Estado inicial = el real del usuario: **las 4 colas STAGING ya existen, ningún 
 | permiso Queues:Edit ausente | el error nombra exactamente `Account · Queues · Edit`; ningún Worker desplegado |
 | token erróneo | `TOKEN_INVALID` antes de nada |
 | add-hub HUB_C (STAGING) | toca **solo** cola/DLQ/receptor/consumer de HUB_C y el ingress (orden: receptor → consumer → ingress); config actualizado con copia; repetirlo se rechaza sin escribir |
-| PROD sin STAGING PASS | `BLOCKED`, cero escrituras |
+| PROD sin STAGING PASS, o con una ejecución `--quick` (PARTIAL) | `BLOCKED`, cero escrituras |
+| URL de halts PROD apuntando a HUB_A | `HALT_URL_IS_HUB`, nada desplegado |
 | PROD con 8180 en la URL | `HARD_LOCK_CONTROL_PORT`, nada desplegado |
-| prod-deploy | despliega `kawa-edge-ingress-prod` y `kawa-edge-delivery-hub-a-prod` (inerte), el secreto de HUB_A solo en su consumer, sin Service Binding; STAGING intacto; el secreto no se imprime ni persiste; segundo `prod-deploy` sin escrituras; HUB_B con el **mismo** secreto → `WEBHOOK_SECRET_REUSED`; HUB_B con el suyo → se añade **sin tocar** el consumer de HUB_A; `cutover-check` → C3/C4 `BLOCKED`; `cutover` → rechazado |
+| prod-deploy | despliega `kawa-edge-ingress-prod` y `kawa-edge-delivery-hub-a-prod` (inerte), el secreto de HUB_A solo en su consumer, sin Service Binding; STAGING intacto; el secreto no se imprime ni persiste (ni un digest); segundo `prod-deploy` sin escrituras; `--set-halt-notify` cambia solo esa URL y **no** rota el path token; HUB_B con el **mismo** secreto → `WEBHOOK_SECRET_REUSED`; HUB_B con el suyo → se añade **sin tocar** el consumer de HUB_A; `cutover-check` → C3/C4 `BLOCKED`; `cutover` → rechazado |
 | staging-teardown | borra solo Workers gestionados, **dependientes primero** (nada queda referenciado), conserva las colas, borra los tokens STAGING; con el token mínimo el listado KV de wrangler recibe 403 y se omite |
 
 Los prompts ocultos se prueban a través de un **pseudo-terminal real** (`script`), no con un atajo.

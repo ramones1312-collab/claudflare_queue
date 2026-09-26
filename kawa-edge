@@ -15,7 +15,8 @@ KAWA_UID=$(stat -c %u .); KAWA_GID=$(stat -c %g .)
 export KAWA_UID KAWA_GID
 mkdir -p state secrets config
 # Created by sudo => root-owned; hand them to the folder owner the container runs as.
-chown "$KAWA_UID:$KAWA_GID" state secrets config 2>/dev/null || true
+chown -R "$KAWA_UID:$KAWA_GID" state secrets 2>/dev/null || true
+chown "$KAWA_UID:$KAWA_GID" config config/kawa-edge.json 2>/dev/null || true
 chmod 700 secrets state 2>/dev/null || true
 
 if [ "${1:-}" = "verify-zip" ]; then

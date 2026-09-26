@@ -202,7 +202,7 @@ export const COMMANDS = {
       out.step('Starting the local STAGING topology (Miniflare/workerd, exact dry-run bundles)');
       const target = await localTarget({ plan: local.plan, secrets, persistDir: path.join(tmp, 'persist'), bundleDir: path.join(tmp, 'bundles'), wrangler });
       try {
-        const g = await runGates({ target, secrets, dests, all: enabledIds(cfg), includeLong: !!f['include-long'], evidenceDir: path.join(STATE_DIR, 'evidence'),
+        const g = await runGates({ target, secrets, dests, all: enabledIds(cfg), includeLong: false, evidenceDir: path.join(STATE_DIR, 'evidence'),
                                    meta: { note: 'LOCAL REHEARSAL — does not replace the Cloudflare STAGING gate' } });
         return { result: g.result === 'PASS' ? 'PASS' : 'FAIL', detail: `LOCAL REHEARSAL ${g.result} (not a STAGING PASS)`, report: g.file };
       } finally {

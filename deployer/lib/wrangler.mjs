@@ -12,6 +12,15 @@ import { apiBase } from './cfapi.mjs';
 const PASSTHROUGH = ['PATH', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'NODE_EXTRA_CA_CERTS',
                      'SSL_CERT_FILE', 'TZ'];
 
+/** Re-assembles whole lines before emitting: a secret split across two chunks is redacted as one. */
+export function lineSink(emit) {
+  let partial = '';
+  return {
+    push(text) { const lines = (partial + text).split('\n'); partial = lines.pop(); for (const l of lines) emit(l); },
+    flush() { if (partial) emit(partial); partial = ''; },
+  };
+}
+
 export function pinnedVersion() {
   const lock = JSON.parse(fs.readFileSync(path.join(EDGE_DIR, 'package-lock.json'), 'utf8'));
   return lock.packages['node_modules/wrangler'].version;
@@ -44,23 +53,20 @@ export function createWrangler({ token, accountId, quiet = false } = {}) {
       fs.mkdirSync(BUILD_DIR, { recursive: true });
       const child = spawn(WRANGLER_BIN, args, { cwd: BUILD_DIR, env: env(), stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '', stderr = '';
-      const partial = { out: '', err: '' };
-      // Redact whole LINES: a secret split across two chunks must never be printed as two fragments.
       const emit = (line) => { if (!quiet && line.trim()) out.info('   │ ' + redact(line)); };
+      const sinks = { out: lineSink(emit), err: lineSink(emit) };
       const pipe = (buf, which) => {
         const text = buf.toString();
         if (which === 'out') stdout += text; else stderr += text;
-        const lines = (partial[which] + text).split('\n');
-        partial[which] = lines.pop();
-        for (const line of lines) emit(line);
+        sinks[which].push(text);
       };
       child.stdout.on('data', b => pipe(b, 'out'));
       child.stderr.on('data', b => pipe(b, 'err'));
-      child.on('exit', () => { emit(partial.out); emit(partial.err); partial.out = partial.err = ''; });
       if (input) child.stdin.write(input);
       child.stdin.end();
       child.on('error', reject);
       child.on('close', (code) => {
+        sinks.out.flush(); sinks.err.flush();                                   // final unterminated lines
         const res = { code, stdout: redact(stdout), stderr: redact(stderr) };
         if (code !== 0 && !allowFail) {
           const tail = (res.stderr + '\n' + res.stdout).trim().split('\n').slice(-6).join(' | ');

@@ -160,9 +160,14 @@ export function validateHaltUrl(raw, hubHosts = []) {
   if (u.protocol !== 'https:') throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL must use https');
   if (u.port) throw new KawaError('HALT_URL_INVALID', 'the halt-notification URL must not name a port');
   const host = u.hostname.replace(/\.$/, '').toLowerCase();
-  const hubs = new Set([HARD_LOCKS.HUB_A_PUBLIC_HOST, ...hubHosts].map(h => String(h).replace(/\.$/, '').toLowerCase()));
-  if (hubs.has(host)) throw new KawaError('HALT_URL_IS_HUB', 'the halt notification must go to a collector independent of every Hub, not to a Hub host');
-  if (/\/webhook\//i.test(u.pathname)) throw new KawaError('HALT_URL_IS_HUB', 'the halt-notification URL must not be a Hub webhook path');
+  // Refuse every host in a Hub's DOMAIN (its zone/tunnel may expose other services, e.g. a control
+  // plane alias), not only the exact ingress host.
+  const domainOf = (h) => String(h).replace(/\.$/, '').toLowerCase().split('.').slice(-2).join('.');
+  const hubDomains = new Set([HARD_LOCKS.HUB_A_PUBLIC_HOST, ...hubHosts].map(domainOf));
+  if (hubDomains.has(domainOf(host))) throw new KawaError('HALT_URL_IS_HUB', 'the halt notification must go to a collector independent of every Hub (not in a Hub\'s domain)');
+  let decoded = u.pathname;
+  try { decoded = decodeURIComponent(u.pathname); } catch { throw new KawaError('HALT_URL_INVALID', 'undecodable path'); }
+  if (/\/webhook(\/|$)/i.test(decoded)) throw new KawaError('HALT_URL_IS_HUB', 'the halt-notification URL must not be a Hub webhook path');
   return registerSecret(u.toString());
 }
 

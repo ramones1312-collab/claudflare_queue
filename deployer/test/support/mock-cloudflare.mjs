@@ -18,7 +18,8 @@ export function createMockCloudflare(opts = {}) {
     token: opts.token || 'mock-token-value-0000000000000000000000',
     tokenStatus: opts.tokenStatus || 'active',
     subdomain: opts.subdomain === undefined ? 'kawa-mock' : opts.subdomain,
-    denyWrite: new Set(opts.denyWrite || []),        // e.g. ['queues'] to simulate a missing permission
+    denyWrite: new Set(opts.denyWrite || []),
+    analytics: opts.analytics || null,               // rows for queueBacklogAdaptiveGroups; null = permission absent        // e.g. ['queues'] to simulate a missing permission
     queues: new Map(),                                // name -> queue
     scripts: new Map(),                               // name -> script
     journal: [],
@@ -127,6 +128,10 @@ export function createMockCloudflare(opts = {}) {
     if (req.method === 'GET' && path === '/accounts') {
       return ok(res, [{ id: accountId, name: 'Mock Account' }], { result_info: { page: 1, per_page: 50, count: 1, total_count: 1 } });
     }
+    if (path === '/graphql') {
+      if (!state.analytics) return send(res, 200, { data: null, errors: [{ message: 'not authorized for that account' }] });
+      return send(res, 200, { data: { viewer: { accounts: [{ queueBacklogAdaptiveGroups: state.analytics }] } }, errors: null });
+    }
     if (!(m = /^\/accounts\/([^/]+)(\/.*)?$/.exec(path))) return fail(res, 404, 7003, 'No route for that URI');
     if (m[1] !== accountId) return fail(res, 403, 9109, 'Unauthorized to access requested resource');
     const sub = m[2] || '';
@@ -227,6 +232,7 @@ export function createMockCloudflare(opts = {}) {
           ...Object.entries(metadata.exports || {}).filter(([, v]) => v && v.type === 'durable-object').map(([k]) => k),
           ...((metadata.migrations && metadata.migrations.new_sqlite_classes) || [])])];
         entry.script = name; entry.created = created;
+        s.deployments = [...(s.deployments || []), { id: randomUUID(), source: 'wrangler', strategy: 'percentage', created_on: new Date(Date.now() + (s.deployments || []).length).toISOString(), versions: [{ version_id: randomUUID(), percentage: 100 }], annotations: {} }];
         entry.binding_names = (metadata.bindings || []).map(b => `${b.type}:${b.name}`);
         entry.secret_names = (metadata.bindings || []).filter(b => b.type === 'secret_text').map(b => b.name);
         return ok(res, { ...scriptView(s), startup_time_ms: 5, deployment_id: randomUUID(), has_modules: true });
@@ -275,6 +281,10 @@ export function createMockCloudflare(opts = {}) {
       const s = state.scripts.get(m[1]);
       if (s) s.secrets.delete(decodeURIComponent(m[2]));
       return ok(res, null);
+    }
+    if ((m = /^\/workers\/scripts\/([^/]+)\/deployments$/.exec(sub)) && req.method === 'GET') {
+      const sc = state.scripts.get(m[1]);
+      return ok(res, { deployments: (sc && sc.deployments || []).slice().reverse() });
     }
     if ((m = /^\/workers\/scripts\/([^/]+)\/(versions|deployments)/.exec(sub))) {
       if (req.method === 'GET') return ok(res, { items: [], deployments: [], latest: null });

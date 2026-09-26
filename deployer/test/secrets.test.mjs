@@ -57,3 +57,10 @@ test('no other destination may point at HUB_A\'s ingress host', async () => {
   cfg.prod.destinations[1].webhook_host = H;
   await assert.rejects(validateConfig(cfg), { code: 'HARD_LOCK_HUB_A_HOST' });
 });
+
+test('halt URL: any host in a Hub domain and encoded /webhook paths are refused', () => {
+  for (const u of ['https://x.integrademia.com/status', 'https://collector.example.org/%77ebhook/abc', 'https://collector.example.org/webhook',
+                   'https://ctl.hub-b.example.com/x']) {
+    assert.throws(() => validateHaltUrl(u, ['hub-b.example.com']), { code: 'HALT_URL_IS_HUB' }, u);
+  }
+});

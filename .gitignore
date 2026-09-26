@@ -8,3 +8,7 @@ secrets/*
 build/
 dist/
 *.log
+config/kawa-edge.json
+config/*.bak-*
+config/*.tmp-*
+.env
