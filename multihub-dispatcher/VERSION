@@ -1,0 +1,4 @@
+KAWA VECTOR · MULTI-HUB DISPATCHER
+version: 0.1.0
+revision: V0.1 (2026-09-27)
+runtime: node 22 (node:22-bookworm-slim@sha256:43ac6c60…772c), node:sqlite, zero npm dependencies

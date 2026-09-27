@@ -1,0 +1,18 @@
+{
+  "destinations": [
+    {
+      "id": "HUB_A",
+      "enabled": true,
+      "host": "192.168.0.20",
+      "port": 8181,
+      "webhook_secret_file": "hub_a_webhook_token"
+    },
+    {
+      "id": "HUB_B",
+      "enabled": false,
+      "host": "192.168.0.20",
+      "port": 8281,
+      "webhook_secret_file": "hub_b_webhook_token"
+    }
+  ]
+}

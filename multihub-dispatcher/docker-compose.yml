@@ -1,0 +1,34 @@
+# KAWA VECTOR · Multi-Hub Dispatcher V0.1 · Synology Container Manager: Project → Create → this folder.
+# No .env needed. Host port 8191 (override with DISPATCHER_PORT if you ever need to).
+services:
+  dispatcher:
+    build: .
+    image: kawa-multihub-dispatcher:0.1.0
+    container_name: kawa-multihub-dispatcher
+    restart: unless-stopped
+    ports:
+      - "${DISPATCHER_PORT:-8191}:8080"
+    environment:
+      PORT: "8080"
+    volumes:
+      - ./config:/config:ro
+      - ./secrets:/secrets:ro
+      - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    privileged: false
+    # Runs as root INSIDE the container with every capability dropped except DAC_OVERRIDE, so it can
+    # write ./data whatever owner or ACL Synology gives that folder (no manual chmod/chown needed).
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

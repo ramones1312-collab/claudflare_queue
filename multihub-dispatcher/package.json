@@ -1,0 +1,13 @@
+{
+  "name": "kawa-multihub-dispatcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KAWA VECTOR multi-Hub dispatcher: receive, persist (SQLite), acknowledge, deliver to N Hubs with retry",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/main.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=4 test/*.test.mjs"
+  },
+  "dependencies": {}
+}

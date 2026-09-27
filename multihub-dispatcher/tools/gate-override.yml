@@ -1,0 +1,15 @@
+# Physical gate only (never shipped): adds two mock Hubs to the SAME compose project. The dispatcher
+# service from the shipped docker-compose.yml is used unchanged.
+services:
+  mock-a:
+    image: node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+    command: ["node", "/mock/mock-hub.mjs"]
+    environment: { PORT: "9001", NAME: "HUB_A" }
+    volumes: ["${GATE_TOOLS}:/mock:ro"]
+    ports: ["127.0.0.1:19001:9001"]
+  mock-b:
+    image: node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+    command: ["node", "/mock/mock-hub.mjs"]
+    environment: { PORT: "9002", NAME: "HUB_B" }
+    volumes: ["${GATE_TOOLS}:/mock:ro"]
+    ports: ["127.0.0.1:19002:9002"]
