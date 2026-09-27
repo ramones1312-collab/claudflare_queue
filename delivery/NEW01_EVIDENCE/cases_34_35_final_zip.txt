@@ -1,0 +1,13 @@
+# Cases #34/#35 on the FINAL R3.3 ZIP (262ff379…), verified with the deployer code extracted from that ZIP
+-- genuine final ZIP:
+  PASS    verify-release · 0.1 s · release verified · sha256 262ff379fc70a6fc4fd9b3efb7deb81f2bc5ac44afd82931ca298aca133ddae1
+-- case #34 (docs/audit.txt + 0x7075 -> kawa-edge-nas/secrets/cloudflare_api_token); unzip -l would extract:
+       21  1980-00-00 00:00   kawa-edge-nas/secrets/cloudflare_api_token
+ ✘ UNEXPECTED: Error: zip entry "kawa-edge-nas/docs/audit.txt" carries extra field 0x7075 (Unicode Path: would replace the declared name); refused
+  FAIL    verify-release · 0.0 s
+   kawa-verify temp dirs left: 0
+-- case #35 (docs/audit.txt + 0x7075 -> kawa-edge-nas/config/kawa-edge.json); unzip -l would extract:
+       21  1980-00-00 00:00   kawa-edge-nas/config/kawa-edge.json
+ ✘ UNEXPECTED: Error: zip entry "kawa-edge-nas/docs/audit.txt" carries extra field 0x7075 (Unicode Path: would replace the declared name); refused
+  FAIL    verify-release · 0.0 s
+   kawa-verify temp dirs left: 0

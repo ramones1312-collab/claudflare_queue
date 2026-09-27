@@ -1,0 +1,43 @@
+ Container kawa-edge-deployer-installer-run-f44ba2ad0eb9 Creating 
+ Container kawa-edge-deployer-installer-run-f44ba2ad0eb9 Created 
+
+== Package integrity
+ ✔ manifest — edge-signal-buffer-v1.3.1-nas R3.3 · R3.2 + NEW-01 (ZIP extra fields, Unicode Path 0x7075) only (2026-09-27) · 103 files · manifest sha256 8ba04084326aa4a6…
+
+== Toolchain
+ ✔ node — v22.23.3
+   npm 10.9.9 · linux/x64 · 4 CPU
+ ✔ wrangler pinned — lockfile 4.132.0 · binary 4.132.0
+ ✔ no implicit wrangler.toml at the Edge root — a root config would make a bare `wrangler deploy` ambiguous
+
+== Configuration · STAGING
+ ✔ environment isolation — 6 Workers + 4 queues, every name ends in -stg (or is a staging receiver)
+   destinations: HUB_A, HUB_B
+ ✔ STAGING hard-lock — every consumer is bound to its own staging receiver; no production host is referenced
+   HUB_A MAINNET out of scope: the deployer never contacts vector-hook.integrademia.com or the NAS; ports 8180/8080 are refused in any URL
+
+== Starting the local STAGING topology (Miniflare/workerd, exact dry-run bundles)
+
+== STAGING gates · target=local · destinations HUB_A, HUB_B · run 0a96df09
+ ✔ G00    Baseline: schema 2, every enabled destination clean, receivers reset (0 s)
+ ✔ A      Durable acceptance: 202 after commit; one signal, one delivery per destination, same bytes (1 s)
+ ✔ C      Reorder: 5 concurrent alerts reach each Hub in origin order (1 s)
+ ✔ E      Burst: 10 concurrent alerts, strict order per destination (1 s)
+ ✔ D      Duplicate TradingView request: Edge transports both, each Hub deduplicates (1 s)
+ ✔ F      Lost response on HUB_A: no advance, retry, then DELIVERED; HUB_B unaffected (63 s)
+ ✔ M      Receiver outage on HUB_B: 3 alerts in flight, the first delivery gets a 503; nothing lost, strict order on recovery (63 s)
+   cloud ISO-X  HUB_A down (queue delivery paused): HUB_B keeps delivering; HUB_A catches up in order (Cloudflare-only gate)
+   cloud ISO-Y  HUB_B down (queue delivery paused): HUB_A keeps delivering; HUB_B catches up in order (Cloudflare-only gate)
+   cloud ISO-XY Both down: signals durable; each destination converges independently when it returns (Cloudflare-only gate)
+ ✔ G      FAILED_PERMANENT on HUB_B (permanent 4xx): DLQ record (platform-verified when readable), halt of HUB_B only; HUB_A delivers (6 s)
+ ✔ H      N+1 blocked ONLY on halted HUB_B; its backlog stays durable (R21) (20 s)
+ ✔ I      Admin retry (HUB_B, audited): the halted alert and its backlog arrive in order (41 s)
+ ✔ J      Admin skip (HUB_B): ADMIN_SKIPPED, audited, head advances without delivering it (0 s)
+   cloud L      Durable Object restart (ingress redeploy) with a pending delivery: sequence continues, nothing lost (Cloudflare-only gate)
+   cloud K      Transport outage longer than the 5-min redispatch lease: recovers without intervention (Cloudflare-only gate)
+ ✔ BYTE   Byte-for-byte: every delivered body hashes to what was sent (0 s)
+ ✔ RB     Rollback readiness: every destination drained, no halt, gate ok:true (0 s)
+
+  PASS    rehearse · 203.9 s · LOCAL REHEARSAL PASS (not a STAGING PASS)
+   log: state/logs/2026-09-27T00-18-00-419Z-rehearse.log
+   evidence: state/evidence/staging-gates-local-2026-09-27T00-18-08-183Z-PASS.json

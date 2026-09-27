@@ -1,0 +1,258 @@
+ Container kawa-edge-deployer-installer-run-ec38f7a5f22e Creating 
+ Container kawa-edge-deployer-installer-run-ec38f7a5f22e Created 
+
+== FULL RELEASE GATE · input tree eab40e62b7cbc867… (83 files)
+
+== Edge suite · workerd · files in PARALLEL (each file its own isolate and Durable Object streams)
+   Test Files  11 passed (11)
+   Tests  95 passed (95)
+   Duration  7.25s (transform 285ms, setup 0ms, collect 4.30s, tests 12.83s, environment 2ms, prepare 20.68s)
+
+== Deployer suite · node:test · files in parallel (unit + installer E2E against the mock Cloudflare API)
+✔ add-hub HUB_C (STAGING): only the new Hub and the ingress change; config updated (26454.567884ms)
+✔ rotateProdPathToken writes the config, redeploys the PROD ingress with a NEW token only, returns its URL (1297.109825ms)
+✔ H-15 · cutover re-verifies the package manifest FIRST: a modified file stops it before any prompt (79.687243ms)
+✔ fail closed, zero writes: a foreign Worker with an Edge name (7322.274485ms)
+✔ fail closed, zero writes: a queue consumed by a foreign Worker (7266.488475ms)
+✔ fail closed, zero writes: a paused queue (7117.918079ms)
+✔ fail closed, zero writes: no workers.dev subdomain (7257.526464ms)
+✔ fail closed, zero writes: an inactive token (7323.913783ms)
+✔ fail closed, zero writes: a foreign Worker the listing does not show (7181.750035ms)
+✔ fail closed, zero writes: a foreign-consumed queue on a later page (7012.805625ms)
+✔ missing Queues:Edit permission is named precisely (7206.941536ms)
+✔ a wrong token is refused before anything else (7056.89199ms)
+✔ D-08 · resume-queues never resumes a queue consumed by a foreign Worker (80.77069ms)
+✔ install from the real starting state: reuses the 4 queues, deploys in dependency order, keeps secrets out of disk (20969.607141ms)
+✔ fresh account: creates the missing queues before any Worker (13946.939346ms)
+✔ PROD needs a STAGING PASS: none, or any tampered/insufficient one, is BLOCKED with zero PROD writes (21091.984333ms)
+✔ R3-03 · the most recent Cloudflare run of the same build governs; an old PASS expires (13948.74074ms)
+✔ add-hub --env prod is gated exactly like prod-deploy (F-03) (27013.725157ms)
+✔ prod-deploy: a halt URL pointing into a Hub domain is refused; nothing deployed (16728.844448ms)
+✔ prod-deploy: control-plane port refused; nothing deployed (17304.134821ms)
+✔ prod-deploy: inert PROD with own names/secrets; idempotent; halt change needs confirmation and keeps the path token; reuse refused; HUB_A untouched by add-hub; cutover refused (46022.082566ms)
+✔ staging-teardown deletes only managed STAGING Workers, dependents first (21552.556609ms)
+✔ E-05 · gate L: a restart is proven only by two known, different deployment ids (0.805302ms)
+✔ E-06 · gate ISO-XY: both destinations must hold a durable pending delivery (never vacuous) (0.328449ms)
+✔ R3-13 · gate G: a readable metric without a sample (null) is unknown, not 0 (0.233231ms)
+✔ R3-13 · gate K: the lease is proven only by >= 2 publications, no failed send, and a wait >= 5 min (0.224276ms)
+✔ E-10 · gates G00 and RB check EVERY enabled destination, not only the first two (4.875718ms)
+✔ a symlink at state/.image-manifest makes the launcher refuse; the target is untouched (16.138768ms)
+✔ a symlink at config/kawa-edge.json makes the launcher refuse; the target is untouched (10.707926ms)
+✔ a symlink at secrets (the directory itself) makes the launcher refuse; the target is untouched (8.078396ms)
+✔ clean folder: the launcher proceeds and, as root, writes nothing into state/ (N-1: no stamp file) (25.884279ms)
+✔ a root-owned folder is refused: the container must never run as root (0.814566ms)
+✔ verify-zip fails without a .sha256 or an explicit expected hash (5.772997ms)
+✔ verify-zip reads the ZIP hash from the first line of the two-line .sha256 sidecar (14.687368ms)
+✔ N-3 · a hard link planted in state/ never makes root hand a foreign file to the folder owner (0.20642ms)
+✔ R3-15 · the launcher refuses to run through a symbolic link to it (2.677248ms)
+✔ R3-15 · .env read by docker compose under sudo must be a regular file of the folder owner (6.690686ms)
+✔ kawa-edge-ingress-stg: full config = R4 except the documented deltas (9.157391ms)
+✔ kawa-edge-delivery-hub-a-stg: full config = R4 except the documented deltas (2.794338ms)
+✔ kawa-edge-delivery-hub-b-stg: full config = R4 except the documented deltas (1.656ms)
+✔ kawa-staging-receiver-hub-a: full config = R4 except the documented deltas (1.580566ms)
+✔ kawa-staging-receiver-hub-b: full config = R4 except the documented deltas (2.834523ms)
+✔ kawa-edge-admin-stg: full config = R4 except the documented deltas (1.822423ms)
+✔ real vitest: a test file that throws at import makes the gate FAIL (auditor F-01 reproduction) (2123.593207ms)
+✔ real vitest: the same tree without the broken file passes, and a file that did not run is caught (1414.730548ms)
+✔ R3-02 · deployer gate anchored per file: the auditor variants D2/D3/D7 are FAIL with real node:test (674.328904ms)
+✔ R3-02 · the anchor declares exactly the deployer test files on disk (1.003552ms)
+✔ R3-05 · a test that prints a forged node:test summary cannot change the verdict (113.531445ms)
+✔ R3-10 · Edge files are identified by path: a same-name decoy in a subdirectory is FAIL (0.333466ms)
+✔ F-11 · the Edge workspace creates the missing target of node_modules/.vite (else vitest exits 1 after a green run) (51.500119ms)
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+ ✔ manifest SHA-256 matches the published one
+ ✔ manifest: 9 files verified · t · r
+ ✔ test evidence bound to these bytes: input tree 875219dd3c99c555… · Edge 1/1 (exit 0) · deployer 1/1 (exit 0)
+ ✔ test evidence signature verified (this is the installation that produced it)
+   integrity anchor = the separately delivered .sha256; independent assurance = re-run ./kawa-edge test-full on this ZIP (physical gate)
+ ✔ raw ZIP entries (10) = manifest + itself; no secrets, state, node_modules, user config or implicit root wrangler config
+ ✔ turnkey files present
+ ✔ exactly one runbook in force (RUNBOOK_VIGENTE.md); no V1.2.x deploy instructions shipped
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+ ✔ manifest SHA-256 matches the published one
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+ ✔ manifest SHA-256 matches the published one
+ ✔ manifest: 9 files verified · t · r
+ ✔ test evidence bound to these bytes: input tree 875219dd3c99c555… · Edge 1/1 (exit 0) · deployer 1/1 (exit 0)
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+ ✔ manifest SHA-256 matches the published one
+ ✔ manifest: 9 files verified · t · r
+ ✔ test evidence bound to these bytes: input tree 875219dd3c99c555… · Edge 1/1 (exit 0) · deployer 1/1 (exit 0)
+ ! test evidence signed by another installation (key fffffffffff0): not verifiable here; the record is not proof
+   integrity anchor = the separately delivered .sha256; independent assurance = re-run ./kawa-edge test-full on this ZIP (physical gate)
+ ✔ raw ZIP entries (10) = manifest + itself; no secrets, state, node_modules, user config or implicit root wrangler config
+ ✔ turnkey files present
+ ✔ exactly one runbook in force (RUNBOOK_VIGENTE.md); no V1.2.x deploy instructions shipped
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+
+== Verify KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip
+ ✔ sha256 matches the expected value
+ ✔ manifest SHA-256 matches the published one
+ ✔ manifest: 10 files verified · t · r
+ ✔ test evidence bound to these bytes: input tree 875219dd3c99c555… · Edge 1/1 (exit 0) · deployer 1/1 (exit 0)
+ ✔ test evidence signature verified (this is the installation that produced it)
+   integrity anchor = the separately delivered .sha256; independent assurance = re-run ./kawa-edge test-full on this ZIP (physical gate)
+ ✔ raw ZIP entries (11) = manifest + itself; no secrets, state, node_modules, user config or implicit root wrangler config
+ ✔ turnkey files present
+ ✔ exactly one runbook in force (RUNBOOK_VIGENTE.md); no V1.2.x deploy instructions shipped
+✔ F-04 · test evidence with the right hash but not signed here is refused (3.669803ms)
+✔ F-06 · a clean package verifies (13.326461ms)
+✔ F-06 · a ZIP carrying a secret token file is refused (2.924931ms)
+✔ F-06 · a ZIP carrying the operator config is refused (2.225152ms)
+✔ F-06 · a ZIP carrying state/ is refused (2.233323ms)
+✔ F-06 · a ZIP carrying an entry outside the package root is refused (4.356003ms)
+✔ F-06 · a ZIP carrying an undeclared harmless-looking file is refused (5.215369ms)
+✔ F-06 · without a .sha256 (or --sha256) integrity cannot be checked: refused (1.459174ms)
+✔ F-12 · nested state/ build/ dist/ dirs are package content (hashed); symlinks are refused (0.953507ms)
+✔ N-5 · a one-line sidecar (no published manifest hash) is refused (2.909954ms)
+✔ N-2 · where the evidence key exists, unsigned packaged evidence is refused (3.279087ms)
+✔ N-5 · duplicate entry names and bytes hidden outside the central directory are refused (6.716714ms)
+✔ N-6 · a malformed evidence key fails closed (0.419518ms)
+✔ R3-01 · equivalent spellings of secrets/, config/, state/ paths are refused even when the manifest declares them (18.7331ms)
+✔ R3-04 · a malformed signature value (non-hex, multi-byte) is "not signed", never an exception (0.653569ms)
+✔ R3-11 · symlink entries, local/central mismatches and bytes after the directory are refused (4.122712ms)
+✔ R3-12 · tool-named directories outside their fixed places are package content; non-regular files are refused (4.168546ms)
+✔ R3-14 · evidence signed by ANOTHER installation (the developer's, seen on the NAS) warns, never refuses the genuine ZIP (8.804748ms)
+✔ NEW-01 #34 secrets/cloudflare_api_token: a Unicode Path extra field (0x7075) redirecting a declared entry is refused, nothing written (4.01513ms)
+✔ NEW-01 #35 config/kawa-edge.json: a Unicode Path extra field (0x7075) redirecting a declared entry is refused, nothing written (2.2702ms)
+✔ NEW-01 · the same canonical ZIP rebuilt WITHOUT that field still passes (2.868243ms)
+✔ zip: byte-identical output whatever the input order; round-trips with modes (2.881514ms)
+✔ zip: extraction refuses paths that escape the destination (1.054835ms)
+✔ manifest: detects a modified, a missing and an undeclared file; excludes secrets and user config (2.054687ms)
+✔ evidence binding: the input-tree hash changes with any test input and ignores documentation (2.32593ms)
+✔ targeted selection: core -> whole Edge suite; one test file -> that file; docs -> nothing (0.446414ms)
+✔ F-05 / R3-16 · the STAGING binding covers the deployer, Edge runtime, package files, CLI, Dockerfile, launcher and compose file (516.882507ms)
+✔ names: STAGING and PROD never overlap and keep the R4 staging names (1.21221ms)
+✔ render is deterministic (6.86963ms)
+✔ no generated config contains a secret value or a production host in STAGING (5.414958ms)
+✔ every STAGING consumer is hard-locked to ITS OWN receiver; PROD consumers require their own secret (1.722194ms)
+✔ isolation guard refuses a tampered plan (2.398682ms)
+✔ config: the Edge registry itself validates destinations (fail closed) (0.669973ms)
+✔ config: secrets and control ports are refused; HUB_A host is hard-locked (0.647826ms)
+✔ writeBuild writes one explicit config per Worker (1.359603ms)
+✔ D-09 · the build digest does not depend on where the package is installed (4.419299ms)
+
+== STAGING gates · target=cloud · destinations HUB_A, HUB_B · run 56f58dc5
+ ✔ A      A (0 s)
+ ✔ B      B (0 s)
+
+== STAGING gates · target=cloud · destinations HUB_A, HUB_B · run 1d2d588a
+ ✔ A      A (0 s)
+ ! skip  K K (--quick)
+
+== STAGING gates · target=cloud · destinations HUB_A, HUB_B · run c993cdfd
+ ✔ A      A (0 s)
+ ✘ B      B: assertion failed
+
+== STAGING gates · target=cloud · destinations HUB_A, HUB_B · run 27cb47cc
+ ✔ A      A (0 s)
+ ✘ cleanup: resume HUB_A: resume refused
+ ✘ cleanup: resume HUB_B: resume refused
+
+== STAGING gates · target=local · destinations HUB_A, HUB_B · run 85fa5f4a
+ ✔ A      A (0 s)
+   cloud L      L (Cloudflare-only gate)
+✔ all gates pass -> PASS, and cleanup resumes both queues (7.034049ms)
+✔ a skipped (--quick) gate makes the cloud run PARTIAL, never PASS (2.07112ms)
+✔ first failure stops the run; later gates are NOT_RUN; result FAIL (3.117136ms)
+✔ a cleanup failure turns an otherwise green run into FAIL (1.965653ms)
+✔ local rehearsal marks platform gates CLOUD_ONLY and does not claim them (2.589304ms)
+✔ gate L proof: the latest deployment id changes on every deploy; unknown script -> null (41.855101ms)
+
+== STAGING gates · target=cloud · destinations HUB_A, HUB_B · run 86f38527
+✔ queue backlog: a permission error is unreadable, no rows is unknown (never 0), rows are read (14.309278ms)
+✔ a secret split across two output chunks is still redacted as a whole (0.383806ms)
+✔ E-07 · a run with zero gates is FAIL, never a vacuous PASS (1.072911ms)
+✔ F-04 · the gate list PROD requires is the one defined in code (1.052381ms)
+✔ webhook URL: only https://<ingress host>/webhook/<secret> (1.770593ms)
+✔ redaction masks registered secrets, webhook path tokens and bearer tokens (0.504531ms)
+✔ halt-notification URL can never reach a Hub (it bypasses the Service Binding) (0.785658ms)
+✔ the same secret for two Hubs is refused even within one run (2.661064ms)
+✔ no other destination may point at HUB_A's ingress host (2.449522ms)
+✔ halt URL: any host in a Hub domain and encoded /webhook paths are refused (0.266222ms)
+✔ F-07 · no destination other than HUB_A may point anywhere in HUB_A's domain (0.712439ms)
+✔ C-02 / C-07 / F-18 · IP-literal halt URLs, ?/# markers and percent-encoded secrets are refused (0.271924ms)
+ℹ tests 104
+ℹ suites 0
+ℹ pass 104
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 111039.531082
+
+  PASS    test-full · 118.8 s · Edge 95/95 (11/11 files, exit 0) · deployer 104/104 (exit 0) · 7.7 s + 111.1 s
+   log: state/logs/2026-09-27T00-09-38-806Z-test-full.log
+   evidence: state/evidence/test-full-eab40e62b7cbc867-PASS.json
