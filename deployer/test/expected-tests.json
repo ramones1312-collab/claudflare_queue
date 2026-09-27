@@ -11,7 +11,7 @@
   "launcher.test.mjs": 10,
   "r4-equivalence.test.mjs": 6,
   "release-gate.test.mjs": 7,
-  "release-integrity.test.mjs": 18,
+  "release-integrity.test.mjs": 21,
   "release.test.mjs": 6,
   "render.test.mjs": 9,
   "runner.test.mjs": 10,

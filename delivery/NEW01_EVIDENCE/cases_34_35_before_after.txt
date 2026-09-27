@@ -1,0 +1,24 @@
+### case #34 · entry declared kawa-edge-nas/docs/audit.txt + extra 0x7075 -> kawa-edge-nas/secrets/cloudflare_api_token
+-- unzip -l (Info-ZIP UnZip 6.00):
+    28290  1980-00-00 00:00   kawa-edge-nas/edge/test/scenario_audit_remediation.test.js
+       21  1980-00-00 00:00   kawa-edge-nas/secrets/cloudflare_api_token
+-- files unzip actually wrote:
+./kawa-edge-nas/secrets/cloudflare_api_token
+-- verify-release, R3.2 code (a49a526):
+  PASS    verify-release · 0.0 s · release verified · sha256 1d171387b75251244170c05388576907734c3f35953f1291f6b1b6e630cb0a50
+-- verify-release, NEW-01 fix:
+ ✘ UNEXPECTED: Error: zip entry "kawa-edge-nas/docs/audit.txt" carries extra field 0x7075 (Unicode Path: would replace the declared name); refused
+  FAIL    verify-release · 0.0 s
+
+### case #35 · entry declared kawa-edge-nas/docs/audit.txt + extra 0x7075 -> kawa-edge-nas/config/kawa-edge.json
+-- unzip -l (Info-ZIP UnZip 6.00):
+    28290  1980-00-00 00:00   kawa-edge-nas/edge/test/scenario_audit_remediation.test.js
+       21  1980-00-00 00:00   kawa-edge-nas/config/kawa-edge.json
+-- files unzip actually wrote:
+./kawa-edge-nas/config/kawa-edge.json
+-- verify-release, R3.2 code (a49a526):
+  PASS    verify-release · 0.0 s · release verified · sha256 e8bbbc5a7444c9ea6d8192b0231dd945518325c1c469872ae9a56ad4144bcd30
+-- verify-release, NEW-01 fix:
+ ✘ UNEXPECTED: Error: zip entry "kawa-edge-nas/docs/audit.txt" carries extra field 0x7075 (Unicode Path: would replace the declared name); refused
+  FAIL    verify-release · 0.0 s
+

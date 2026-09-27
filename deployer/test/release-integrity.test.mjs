@@ -16,6 +16,8 @@ const { writeSigned } = await import('../lib/evidence.mjs');
 const { buildManifest, inputTreeHash, listPackageFiles, MANIFEST_NAME } = await import('../lib/manifest.mjs');
 const { writeZip, readZip } = await import('../lib/zip.mjs');
 const { spawnSync } = await import('node:child_process');
+const { createRequire } = await import('node:module');
+const require = createRequire(import.meta.url);
 
 const ok = { ok: true, code: 0, pass: 1, total: 1, tests: 1 };
 
@@ -193,5 +195,56 @@ test('R3-14 · evidence signed by ANOTHER installation (the developer\'s, seen o
   writeZip(zip, listPackageFiles(pkg).map(p => ({ name: `kawa-edge-nas/${p}`, data: fs.readFileSync(path.join(pkg, p)) })));
   const h = (x) => crypto.createHash('sha256').update(x).digest('hex');
   fs.writeFileSync(`${zip}.sha256`, `${h(fs.readFileSync(zip))}  ${ZIP_NAME}\n${h(fs.readFileSync(path.join(pkg, MANIFEST_NAME)))}  kawa-edge-nas/${MANIFEST_NAME}\n`);
+  assert.equal((await verify(zip)).result, 'PASS');
+});
+
+/**
+ * NEW-01 · Rebuilds a genuine package ZIP (stored entries) and adds an Info-ZIP Unicode Path extra field
+ * (0x7075: version 1, CRC-32 of the declared name, UTF-8 name) to ONE entry, in its local AND central
+ * header. unzip then uses that name instead of the declared one.
+ */
+function withUnicodePath(zip, declared, effective) {
+  const zlib = require('node:zlib');
+  const entries = readZip(zip);
+  const locals = [], centrals = [];
+  let off = 0;
+  for (const e of entries) {
+    const name = Buffer.from(e.name), crc = zlib.crc32(e.data) >>> 0;
+    let extra = Buffer.alloc(0);
+    if (e.name === declared) {
+      const u = Buffer.from(effective);
+      extra = Buffer.alloc(4 + 5 + u.length);
+      extra.writeUInt16LE(0x7075, 0); extra.writeUInt16LE(5 + u.length, 2); extra.writeUInt8(1, 4);
+      extra.writeUInt32LE(zlib.crc32(name) >>> 0, 5); u.copy(extra, 9);
+    }
+    const l = Buffer.alloc(30); l.writeUInt32LE(0x04034b50, 0); l.writeUInt16LE(20, 4); l.writeUInt16LE(0, 6);
+    l.writeUInt32LE(crc, 14); l.writeUInt32LE(e.data.length, 18); l.writeUInt32LE(e.data.length, 22);
+    l.writeUInt16LE(name.length, 26); l.writeUInt16LE(extra.length, 28);
+    const c = Buffer.alloc(46); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(0x031e, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0, 8);
+    c.writeUInt32LE(crc, 16); c.writeUInt32LE(e.data.length, 20); c.writeUInt32LE(e.data.length, 24);
+    c.writeUInt16LE(name.length, 28); c.writeUInt16LE(extra.length, 30); c.writeUInt32LE((((e.mode || 0o644) | 0o100000) << 16) >>> 0, 38); c.writeUInt32LE(off, 42);
+    locals.push(l, name, extra, e.data); centrals.push(c, name, extra);
+    off += 30 + name.length + extra.length + e.data.length;
+  }
+  const cd = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(off, 16);
+  fs.writeFileSync(zip, Buffer.concat([...locals, cd, end]));
+  fs.writeFileSync(`${zip}.sha256`, fs.readFileSync(`${zip}.sha256`, 'utf8').replace(/^[0-9a-f]{64}/, crypto.createHash('sha256').update(fs.readFileSync(zip)).digest('hex')));
+  return zip;
+}
+
+for (const [label, target] of [['#34 secrets/cloudflare_api_token', 'kawa-edge-nas/secrets/cloudflare_api_token'],
+                               ['#35 config/kawa-edge.json', 'kawa-edge-nas/config/kawa-edge.json']]) {
+  test(`NEW-01 ${label}: a Unicode Path extra field (0x7075) redirecting a declared entry is refused, nothing written`, async () => {
+    const zip = withUnicodePath(makeZip(['kawa-edge-nas/docs/audit.txt'], { declare: true }), 'kawa-edge-nas/docs/audit.txt', target);
+    const before = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('kawa-verify-')).length;
+    await assert.rejects(verify(zip), (e) => /extra field 0x7075/.test(e.message));
+    assert.equal(fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('kawa-verify-')).length, before, 'verify-release extracted something');
+  });
+}
+
+test('NEW-01 · the same canonical ZIP rebuilt WITHOUT that field still passes', async () => {
+  const zip = withUnicodePath(makeZip(['kawa-edge-nas/docs/audit.txt'], { declare: true }), '(none)', '');
   assert.equal((await verify(zip)).result, 'PASS');
 });

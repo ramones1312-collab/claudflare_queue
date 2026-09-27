@@ -23,11 +23,11 @@ import { writeSigned, verify as verifySignature, readEvidence, hasEvidenceKey, l
 
 export const IDENTITY = {
   artifact: 'edge-signal-buffer-v1.3.1-nas',
-  revision: 'R3.2 · R3.1 + all remaining P3 findings of the R3 audit (R3-04..R3-16), owner instruction (2026-09-26)',
+  revision: 'R3.3 · R3.2 + NEW-01 (ZIP extra fields, Unicode Path 0x7075) only (2026-09-27)',
   lineage: 'V1.3.1 <- V1.3.0 R4 CANDIDATE (zip sha256 1bcd1e3df8fba89781916efcaf173a45983f0566bb189d59e20929766db82867)',
   runtime_code: 'Edge Worker sources byte-identical to V1.3.0 R4',
 };
-export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.2_2026-09-26.zip';
+export const ZIP_NAME = 'KAWA_EDGE_SIGNAL_BUFFER_V1_3_1_NAS_R3.3_2026-09-27.zip';
 export const EVIDENCE_NAME = 'TEST_EVIDENCE_V1_3_1.json';
 const ZIP_ROOT = 'kawa-edge-nas';
 

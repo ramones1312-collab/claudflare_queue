@@ -1,4 +1,12 @@
-# CHANGELOG · V1.3.1 (R3.2) respecto de V1.3.0 R4
+# CHANGELOG · V1.3.1 (R3.3) respecto de V1.3.0 R4
+
+## R3.3 (2026-09-27) · NEW-01 únicamente
+
+| Id | Cambio | Ficheros |
+|---|---|---|
+| NEW-01 (P2) | `readZip` rechaza cualquier entrada con un campo extra, en la cabecera local o central. Info-ZIP usa el campo Unicode Path `0x7075` como nombre efectivo, y así una entrada declarada `docs/audit.txt` se extraía en `secrets/…` o en `config/kawa-edge.json`. El paquete nunca lleva campos extra | `deployer/lib/zip.mjs`; tests en `deployer/test/release-integrity.test.mjs` (+3; ancla `expected-tests.json`) |
+
+Nada más cambia: `edge/src/**`, receptor, admin, lógica de Cloudflare y el resto de correcciones quedan igual.
 
 ## R3.2 (2026-09-26) · cierre de los P3 restantes de la auditoría de R3 (instrucción del owner)
 

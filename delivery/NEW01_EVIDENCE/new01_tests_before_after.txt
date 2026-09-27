@@ -1,0 +1,13 @@
+# BEFORE · code = R3.2 exact (a49a526), test = NEW-01 regressions
+not ok 1 - NEW-01 \#34 secrets/cloudflare_api_token: a Unicode Path extra field (0x7075) redirecting a declared entry is refused, nothing written
+not ok 2 - NEW-01 \#35 config/kawa-edge.json: a Unicode Path extra field (0x7075) redirecting a declared entry is refused, nothing written
+ok 3 - NEW-01 · the same canonical ZIP rebuilt WITHOUT that field still passes
+# pass 1
+# fail 2
+
+# AFTER · code = NEW-01 fix
+ok 1 - NEW-01 \#34 secrets/cloudflare_api_token: a Unicode Path extra field (0x7075) redirecting a declared entry is refused, nothing written
+ok 2 - NEW-01 \#35 config/kawa-edge.json: a Unicode Path extra field (0x7075) redirecting a declared entry is refused, nothing written
+ok 3 - NEW-01 · the same canonical ZIP rebuilt WITHOUT that field still passes
+# pass 3
+# fail 0

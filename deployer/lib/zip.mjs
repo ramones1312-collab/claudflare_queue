@@ -69,6 +69,13 @@ export function readZip(file) {
     seen.add(name);
     if (buf.readUInt32LE(lo) !== 0x04034b50 || buf.toString('utf8', lo + 30, lo + 30 + buf.readUInt16LE(lo + 26)) !== name) throw new Error(`local header does not match the central directory: ${name}`);
     const lnlen = buf.readUInt16LE(lo + 26), lxlen = buf.readUInt16LE(lo + 28);
+    // NEW-01 · fail closed on ANY extra field, central or local: some change the effective pathname
+    // (Info-ZIP uses Unicode Path 0x7075 instead of the declared name). The package never carries one.
+    if (xlen || lxlen) {
+      const ids = (at, len) => { const r = []; for (let i = at; i + 4 <= at + len; i += 4 + buf.readUInt16LE(i + 2)) r.push('0x' + buf.readUInt16LE(i).toString(16).padStart(4, '0')); return r; };
+      const found = [...new Set([...ids(p + 46 + nlen, xlen), ...ids(lo + 30 + lnlen, lxlen)])];
+      throw new Error(`zip entry ${JSON.stringify(name)} carries extra field ${found.join(', ') || '(malformed)'}${found.includes('0x7075') ? ' (Unicode Path: would replace the declared name)' : ''}; refused`);
+    }
     // R3-11 · the local header must agree with the central directory (method, CRC, sizes, no data descriptor).
     if (buf.readUInt16LE(lo + 6) & 0x8 || buf.readUInt16LE(lo + 8) !== method || buf.readUInt32LE(lo + 14) !== crc
         || buf.readUInt32LE(lo + 18) !== csize || buf.readUInt32LE(lo + 22) !== buf.readUInt32LE(p + 24)) throw new Error(`local header differs from the central directory: ${name}`);
