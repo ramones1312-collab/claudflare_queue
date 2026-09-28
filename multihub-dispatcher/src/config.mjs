@@ -77,5 +77,5 @@ export function loadConfig({ configFile, secretsDir }) {
   const secrets = new Map();
   for (const d of enabled) { if (secrets.has(d.secret)) fail(`${d.id} and ${secrets.get(d.secret)} use the same webhook secret; each Hub needs its own`); secrets.set(d.secret, d.id); }
   const ingressSecret = readSecret(secretsDir, ingress.secret_file, 'ingress.secret_file');
-  return { ingress: { ...ingress, secret: ingressSecret }, retry, destinations, enabled };
+  return { ingress: { ...ingress, secret: ingressSecret }, retry, destinations, enabled, audit: raw.audit };   // V0.1.1: audit block passed through
 }

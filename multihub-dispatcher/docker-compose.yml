@@ -1,9 +1,9 @@
-# KAWA VECTOR · Multi-Hub Dispatcher V0.1 · Synology Container Manager: Project → Create → this folder.
+# KAWA VECTOR · Multi-Hub Dispatcher V0.1.1 · Synology Container Manager: Project → Create → this folder.
 # No .env needed. Host port 8191 (override with DISPATCHER_PORT if you ever need to).
 services:
   dispatcher:
     build: .
-    image: kawa-multihub-dispatcher:0.1.0
+    image: kawa-multihub-dispatcher:0.1.1
     container_name: kawa-multihub-dispatcher
     restart: unless-stopped
     ports:

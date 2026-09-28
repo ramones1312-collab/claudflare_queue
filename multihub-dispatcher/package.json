@@ -1,6 +1,6 @@
 {
   "name": "kawa-multihub-dispatcher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "KAWA VECTOR multi-Hub dispatcher: receive, persist (SQLite), acknowledge, deliver to N Hubs with retry",
   "type": "module",

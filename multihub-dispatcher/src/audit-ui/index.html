@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KAWA Dispatcher · Auditoría</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; color: #1b1f24; background: #f6f7f9; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .cards { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .card { background: #fff; border: 1px solid #d8dde3; border-radius: 6px; padding: 8px 12px; min-width: 150px; }
+  .card b { display: block; font-size: 12px; color: #57606a; font-weight: 600; }
+  .ok { color: #1a7f37; } .bad { color: #cf222e; } .warn { color: #9a6700; }
+  form { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; background: #fff; border: 1px solid #d8dde3; border-radius: 6px; padding: 8px; margin-bottom: 12px; }
+  label { display: flex; flex-direction: column; font-size: 12px; color: #57606a; }
+  input, select { font: inherit; padding: 3px 6px; }
+  button, a.btn { font: inherit; padding: 4px 10px; border: 1px solid #8c959f; border-radius: 4px; background: #fff; color: inherit; text-decoration: none; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 12.5px; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #eaeef2; white-space: nowrap; }
+  th { background: #eef1f4; position: sticky; top: 0; }
+  .ev { background: #fff; border: 1px solid #d8dde3; border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<h1>KAWA VECTOR · Multi-Hub Dispatcher · Auditoría</h1>
+<div class="cards" id="cards"></div>
+<form id="f">
+  <label>event_id <input name="event_id" size="8" inputmode="numeric"></label>
+  <label>request_id <input name="request_id" size="30"></label>
+  <label>destino <select name="destination_id" id="dest"><option value="">(todos)</option></select></label>
+  <label>event_type <input name="event_type" size="16" list="types"></label>
+  <label>status <input name="status" size="12" list="statuses"></label>
+  <label>desde <input name="from" type="datetime-local"></label>
+  <label>hasta <input name="to" type="datetime-local"></label>
+  <label>filas <input name="limit" size="5" value="200"></label>
+  <button type="submit">Buscar</button>
+  <a class="btn" id="csv" href="/audit/export.csv">Download CSV</a>
+  <a class="btn" id="json" href="/audit/export.json">Download JSON</a>
+</form>
+<datalist id="types"><option>INGRESS_PERSISTED</option><option>DELIVERY_ATTEMPT</option><option>DELIVERED</option><option>RETRY_SCHEDULED</option><option>FAILED_PERMANENT</option><option>INGRESS_REJECTED_AUTH</option><option>DISPATCHER_STARTED</option></datalist>
+<datalist id="statuses"><option>DELIVERED</option><option>RETRY</option><option>FAILED_PERMANENT</option><option>PENDING</option></datalist>
+<h1>Señales (resultado por destino)</h1>
+<div id="events"></div>
+<h1>Eventos de auditoría</h1>
+<div class="wrap"><table id="t"><thead></thead><tbody></tbody></table></div>
+<script src="/audit/app.js"></script>
+</body>
+</html>

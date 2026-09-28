@@ -1,4 +1,4 @@
-# KAWA VECTOR · Multi-Hub Dispatcher V0.1 · Instalación en el NAS
+# KAWA VECTOR · Multi-Hub Dispatcher V0.1.1 · Instalación en el NAS
 
 Recibe cada alerta de TradingView, la guarda en SQLite, responde 200 y la entrega por separado a cada Hub
 configurado, con reintentos. No toca HUB_A, el Tunnel, TradingView ni ningún puerto existente.
@@ -19,6 +19,8 @@ configurado, con reintentos. No toca HUB_A, el Tunnel, TradingView ni ningún pu
      `…/webhook/<secreto>`. Así las alertas no cambian.
    - `secrets/hub_a_webhook_token`: el secreto de HUB_A (hoy es el mismo).
    - `secrets/hub_b_webhook_token`: el de HUB_B, cuando lo actives. Cada Hub debe tener el suyo.
+   - `secrets/audit_admin_token` (V0.1.1): contraseña de la auditoría web, **distinta** de las anteriores
+     (16 caracteres o más, sin espacios). Si falta, la auditoría sigue registrando pero la web queda desactivada.
 
 Opcional, en `destinations.json`: `"retry": {"schedule_seconds": [5,15,30,60,120,300], "max_attempts": 0}`
 (0 = reintentar sin límite al último intervalo) y `timeout_ms` por Hub (por defecto 10000).
@@ -50,3 +52,15 @@ Si la configuración es inválida, el contenedor se detiene y el registro dice e
 - **Respuestas de un Hub:**
   - 4xx (salvo 408/425/429): `FAILED_PERMANENT` (el Hub decidió; se guarda, no se reintenta).
   - 5xx, timeout o sin conexión: `RETRY`, en orden y sin bloquear a los demás Hubs.
+
+## 6. Auditoría (V0.1.1)
+
+- **Web:** `http://<IP-del-NAS>:8191/audit`, desde la LAN. Usuario `audit`, contraseña: el contenido de
+  `secrets/audit_admin_token`. Por el Tunnel (Cloudflare) está siempre bloqueada.
+- **Qué ves:** una línea por señal (`event_id`) con el resultado de cada Hub (HTTP, latencia, intento, próximo
+  reintento). Puedes filtrar por `event_id`, `request_id`, Hub, tipo, estado y fechas.
+- **Descargas:** botones Download CSV y Download JSON. Cada descarga se guarda también en `data/audit/exports/`.
+- **Estado sin navegador:** `data/audit/dispatcher_status.json`.
+- **Retención:** 90 días (solo la auditoría; nunca las señales ni sus entregas).
+- **Qué nunca se guarda:** secretos, cuerpo de la señal ni cabeceras. Solo su hash, el tamaño, el tipo, la IP de origen
+  y, si el cuerpo es JSON, `ticker`/`symbol`, `order_id`, `order_action` y `market_position`.

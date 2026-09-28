@@ -5,7 +5,7 @@
 set -uo pipefail
 ZIP=$(readlink -f "$1"); SIDE="${2:-$ZIP.sha256}"
 TOOLS=$(cd "$(dirname "$0")" && pwd)
-W=$(mktemp -d /tmp/mhd-gate-XXXX); P=mhdgate$$; NAME=KAWA_VECTOR_MULTIHUB_DISPATCHER_V0_1
+W=$(mktemp -d /tmp/mhd-gate-XXXX); P=mhdgate$$; NAME=KAWA_VECTOR_MULTIHUB_DISPATCHER_V0_1_1
 R=(); pass() { R+=("PASS  $1"); echo "PASS  $1"; }; failx() { R+=("FAIL  $1"); echo "FAIL  $1"; summary; exit 1; }
 summary() { echo; echo "==== PHYSICAL GATE SUMMARY ($(( $(date +%s) - T0 )) s)"; printf '%s\n' "${R[@]}"; }
 T0=$(date +%s)
@@ -38,7 +38,7 @@ chown -R 1026:100 "$C"; PORT=18191; export DISPATCHER_PORT=$PORT
 # 3 · compose config + classic build (BuildKit OFF)
 (cd "$C" && docker compose -f docker-compose.yml config -q) && pass "docker compose config (shipped file, no .env)" || failx "compose config"
 B0=$(date +%s)
-(cd "$C" && DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker build --no-cache -t kawa-multihub-dispatcher:0.1.0 . > "$W/build.log" 2>&1) || { tail -20 "$W/build.log"; failx "classic build"; }
+(cd "$C" && DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker build --no-cache -t kawa-multihub-dispatcher:0.1.1 . > "$W/build.log" 2>&1) || { tail -20 "$W/build.log"; failx "classic build"; }
 grep -q '^Step 1/' "$W/build.log" && grep -q 'Successfully built' "$W/build.log" && pass "classic builder (DOCKER_BUILDKIT=0), no cache: $(( $(date +%s) - B0 )) s" || failx "classic builder markers"
 (cd "$C" && DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose -p $P build > "$W/cbuild.log" 2>&1) && pass "docker compose build with BuildKit OFF" || { tail -20 "$W/cbuild.log"; failx "compose build"; }
 
@@ -79,6 +79,6 @@ LOGS=$(cat "$W/logs-before-down.txt"; dc logs dispatcher 2>&1)
 for s in "$ING" "$SA" "$SB" '"s":'; do echo "$LOGS" | grep -qF "$s" && failx "log leaks $s"; done
 for k in RECEIVED PERSISTED "DELIVERED HUB_A" "RETRY HUB_B"; do echo "$LOGS" | grep -q "$k" || failx "log lacks $k"; done
 pass "logs: RECEIVED/PERSISTED/DELIVERED/RETRY present; no secret, no payload"
-IMG=$(docker run --rm --entrypoint sh kawa-multihub-dispatcher:0.1.0 -c 'ls -A /secrets /config /data; ls /app' | tr '\n' ' ')
+IMG=$(docker run --rm --entrypoint sh kawa-multihub-dispatcher:0.1.1 -c 'ls -A /secrets /config /data; ls /app' | tr '\n' ' ')
 echo "$IMG" | grep -q 'src' && ! echo "$IMG" | grep -qE 'token|destinations.json|dispatcher.db' && pass "image: no secrets, no config, no DB baked in ($IMG)" || failx "image contents: $IMG"
 summary

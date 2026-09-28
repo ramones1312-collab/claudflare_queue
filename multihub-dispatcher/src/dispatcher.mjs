@@ -9,7 +9,7 @@ const DROP = new Set(['host', 'content-length', 'connection', 'keep-alive', 'tra
   'proxy-connection', 'proxy-authorization', 'proxy-authenticate', 'expect']);
 const RETRYABLE_4XX = new Set([408, 425, 429]);
 
-export function createDispatcher({ store, config, log, fetchImpl = fetch, now = Date.now }) {
+export function createDispatcher({ store, config, log, fetchImpl = fetch, now = Date.now, audit = { record() {} } }) {
   const workers = new Map();
   let stopped = false;
 
@@ -40,23 +40,29 @@ export function createDispatcher({ store, config, log, fetchImpl = fetch, now = 
     if (!row) return { idle: true };
     const wait = row.next_retry_at - now();
     if (wait > 0) return { wait };
+    audit.record({ event_type: 'DELIVERY_ATTEMPT', event_id: row.event_id, destination_id: dest.id, attempt: row.attempts + 1, status: row.status });   // V0.1.1
     const r = await deliverOnce(dest, row);
     const attempt = row.attempts + 1;
     const f = { event: row.event_id, attempt, http: r.http, ms: r.ms };
     if (r.http !== null && r.http >= 200 && r.http < 300) {
       store.delivered(row.event_id, dest.id, r.http);
       log(`DELIVERED ${dest.id}`, f);
+      audit.record({ event_type: 'DELIVERED', event_id: row.event_id, destination_id: dest.id, attempt, status: STATUS.DELIVERED, http_status: r.http, latency_ms: r.ms });
     } else if (r.http !== null && r.http < 500 && !RETRYABLE_4XX.has(r.http)) {
       // The Hub answered and refused (auth, bad request, duplicate…): retrying cannot change that.
       store.failedPermanent(row.event_id, dest.id, r.http, `HTTP ${r.http}`);
       log(`FAILED_PERMANENT ${dest.id}`, f);
+      audit.record({ event_type: 'FAILED_PERMANENT', event_id: row.event_id, destination_id: dest.id, attempt, status: STATUS.FAILED_PERMANENT, http_status: r.http, latency_ms: r.ms, error_code: `HTTP ${r.http}` });
     } else if (config.retry.max_attempts && attempt >= config.retry.max_attempts) {
       store.failedPermanent(row.event_id, dest.id, r.http, r.err || `HTTP ${r.http}`);
       log(`FAILED_PERMANENT ${dest.id}`, { ...f, err: r.err, reason: 'max_attempts' });
+      audit.record({ event_type: 'FAILED_PERMANENT', event_id: row.event_id, destination_id: dest.id, attempt, status: STATUS.FAILED_PERMANENT, http_status: r.http, latency_ms: r.ms, error_code: r.err || `HTTP ${r.http}`, detail: { reason: 'max_attempts' } });
     } else {
       const d = delay(attempt);
-      store.retry(row.event_id, dest.id, r.http, r.err || `HTTP ${r.http}`, now() + d);
+      const next = now() + d;
+      store.retry(row.event_id, dest.id, r.http, r.err || `HTTP ${r.http}`, next);
       log(`RETRY ${dest.id}`, { ...f, err: r.err, next_in_s: d / 1000 });
+      audit.record({ event_type: 'RETRY_SCHEDULED', event_id: row.event_id, destination_id: dest.id, attempt, status: STATUS.RETRY, http_status: r.http, latency_ms: r.ms, error_code: r.err || `HTTP ${r.http}`, next_retry_at: next });
     }
     return {};
   }
@@ -67,7 +73,7 @@ export function createDispatcher({ store, config, log, fetchImpl = fetch, now = 
     w.running = (async () => {
       while (!stopped) {
         let r;
-        try { r = await step(dest); } catch (e) { log(`WORKER_ERROR ${dest.id}`, { err: e.code || e.name }); r = { wait: 1000 }; }
+        try { r = await step(dest); } catch (e) { log(`WORKER_ERROR ${dest.id}`, { err: e.code || e.name }); audit.record({ event_type: 'WORKER_ERROR', destination_id: dest.id, error_code: String(e.code || e.name) }); r = { wait: 1000 }; }
         if (stopped) break;
         if (r.idle) await sleep(1000);                 // woken immediately by notify() on a new event
         else if (r.wait) await sleep(Math.min(r.wait, 1000));

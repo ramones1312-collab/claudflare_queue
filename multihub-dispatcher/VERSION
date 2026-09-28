@@ -1,4 +1,4 @@
 KAWA VECTOR · MULTI-HUB DISPATCHER
-version: 0.1.0
-revision: V0.1 (2026-09-27)
+version: 0.1.1
+revision: V0.1.1 · durable audit & observability (2026-09-28); transport core unchanged from V0.1
 runtime: node 22 (node:22-bookworm-slim@sha256:43ac6c60…772c), node:sqlite, zero npm dependencies
